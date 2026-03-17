@@ -16,15 +16,10 @@ Related reference files (not compiled, kept for design context):
 - `Dictionary/dictionary_draft.erl` — early draft of the `dictionary` module
 
 
-## 2. dictionary_imp — export_all flag
+## ~~2. dictionary_imp — export_all flag~~ ✓ DONE
 
-`apps/dictionary/src/dictionary_imp.erl` line 31:
-```erlang
--compile(export_all).
-```
-This should be replaced with an explicit `-export([...]).` list once the
-public API is settled. Until then it suppresses the compiler's ability to
-warn about unused functions.
+`-compile(export_all).` removed. The explicit `-export([...])` list was
+already present; the compiler now warns about unused functions normally.
 
 
 ## 3. graphdb worker modules — all are empty stubs
