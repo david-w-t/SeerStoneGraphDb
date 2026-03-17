@@ -28,8 +28,6 @@
 
 -module(dictionary_imp).
 
--compile(export_all).
-
 %% Macro Functions
 %%----------------------------------------------------------------------------- 
 %% NYI is from Joe Armstrongs boook pg. 424
