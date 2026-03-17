@@ -6,26 +6,14 @@ is implementation work — completing Dallas's unfinished NYI stubs.
 
 ---
 
-## 1. dictionary subsystem — missing worker modules
+## ~~1. dictionary subsystem — missing worker modules~~ ✓ DONE
 
-`dictionary_sup` references two workers that do not exist:
+`dictionary_server` and `term_server` created as gen_server stubs in
+`apps/dictionary/src/`. The `dictionary` application now starts cleanly.
 
-- **`dictionary_server`** — no module exists; needs to be created as a
-  gen_server stub (same pattern as the graphdb workers).
-- **`term_server`** — no module exists; needs to be created as a gen_server
-  stub.
-
-Neither will start until these are created. The `dictionary` application
-cannot reach a running state without them.
-
-Related files:
-- `apps/dictionary/src/dictionary_sup.erl` — references both in `init/1`
-- `Dictionary/dict_wkr.erl` — Dallas's earlier worker sketch (module name
-  `dictionary_wkr`); contains partial CRUD logic using the process
-  dictionary; useful as design reference but is **not** in the `apps/`
-  layout and is not compiled by rebar3
-- `Dictionary/dictionary_draft.erl` — early draft of the `dictionary`
-  module; design reference only, not production code
+Related reference files (not compiled, kept for design context):
+- `Dictionary/dict_wkr.erl` — Dallas's earlier worker sketch
+- `Dictionary/dictionary_draft.erl` — early draft of the `dictionary` module
 
 
 ## 2. dictionary_imp — export_all flag
