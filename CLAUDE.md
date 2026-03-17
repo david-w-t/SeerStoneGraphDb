@@ -6,43 +6,59 @@ This is a **distributed graph database** written in Erlang, originally authored 
 
 ## Language & Runtime
 
-- **Erlang/OTP** — uses the OTP application and supervisor behaviours throughout
-- No build system is currently configured (no `rebar.config`, `erlang.mk`, or `Makefile`)
-- Compiled `.beam` files are checked in alongside `.erl` source — when making changes, recompile manually: `erlc FileName.erl`
-- Compile from the shell: `erl -make` (requires `Emakefile`) or `erlc *.erl`
-- Start the top-level application: `application:start(seerstone).`
+- **Erlang/OTP 27** or later
+- **rebar3 3.24** — build tool (`make rebar3` bootstraps it if not on PATH)
+- Compile: `make compile` or `rebar3 compile`
+- Start an interactive shell: `make shell`
+- Start the full system from the shell: `application:start(nref), application:start(database).`
 
 ## Directory Structure
 
 ```
 SeerStoneGraphDb/
-├── seerstone.erl          # Top-level OTP application callback
-├── seerstone_sup.erl      # Top-level supervisor (starts database_sup)
-├── seerstone.app          # OTP application resource file (binary)
-├── dev_lib.erl            # Dev utilities: trace_module/2, dump/2
-├── priv/
-│   └── default.config     # Runtime config: app_port, data_path, index_path
-├── log/                   # Log output directory
-├── Database/              # `database` OTP application (includes graphdb + dictionary)
-├── graphdb/               # `graphdb` OTP application (the graph database)
-├── Dictionary/            # `dictionary` OTP application (ETS/file-backed key-value store)
-└── Nref Server/           # `nref` OTP application (globally unique node reference IDs)
+├── apps/
+│   ├── seerstone/     # Top-level OTP application and supervisor
+│   ├── database/      # database application (supervises graphdb + dictionary)
+│   ├── graphdb/       # Graph database application and worker stubs
+│   ├── dictionary/    # ETS/file-backed key-value dictionary application
+│   └── nref/          # Globally unique node-reference ID allocator
+├── .github/workflows/
+│   └── ci.yml         # GitHub Actions CI (OTP 27, rebar3 3.24, ubuntu-latest)
+├── rebar.config       # rebar3 umbrella build configuration
+├── rebar.lock         # Locked dependency versions
+├── Makefile           # Convenience targets (compile, shell, release, clean, rebar3)
+├── TASKS.md           # Inventory of remaining implementation work
+└── CLAUDE.md          # This file
 ```
+
+Old pre-rebar3 directories (`Database/`, `graphdb/`, `Dictionary/`, `Nref Server/`) remain
+as historical design references. They are not compiled by rebar3.
 
 ## OTP Supervision Tree
 
 ```
 seerstone (application)
-  └── seerstone_sup (supervisor, one_for_one, MaxR=5, MaxT=5000)
-        └── database_sup (supervisor — child of seerstone_sup)
-              └── [graphdb_sup, dictionary_sup]  ← to be confirmed/completed
+  └── seerstone_sup (supervisor, one_for_one)
+        └── database_sup (supervisor)
+              ├── graphdb_sup (supervisor)
+              │     ├── graphdb_mgr       (gen_server stub)
+              │     ├── graphdb_rules     (gen_server stub)
+              │     ├── graphdb_attr      (gen_server stub)
+              │     ├── graphdb_class     (gen_server stub)
+              │     ├── graphdb_instance  (gen_server stub)
+              │     └── graphdb_language  (gen_server stub)
+              └── dictionary_sup (supervisor)
+                    ├── dictionary_server (gen_server stub)
+                    └── term_server       (gen_server stub)
 
-nref (application — separate, started independently)
+nref (application — started independently)
   └── nref_sup (supervisor)
-        └── nref_allocator  (DETS-backed block allocator)
-        └── nref_server     (serves nrefs to callers; client of nref_allocator)
-        └── nref_include    (purpose TBD)
+        ├── nref_allocator  (DETS-backed block allocator, gen_server)
+        └── nref_server     (serves nrefs to callers, gen_server)
 ```
+
+`nref_include.erl` exists but is unsupervised and unreferenced — purpose unclear
+(see TASKS.md item 4).
 
 ## Common Coding Conventions
 
@@ -65,12 +81,11 @@ end)).
 Every source file starts with:
 1. Copyright block (SeerStone, Inc. 2008)
 2. Author, Created date, Description
-3. OTP behaviour references
-4. Revision history (Rev PA1, Rev A)
-5. `-module(name).` and `-behaviour(app|supervisor|gen_server).`
-6. Module attributes: `-revision(...)`, `-created(...)`, `-created_by(...)`
-7. NYI/UEM macro definitions
-8. `-export([...]).`
+3. Revision history (Rev PA1, Rev A)
+4. `-module(name).` and `-behaviour(application|supervisor|gen_server).`
+5. Module attributes: `-revision(...)`, `-created(...)`, `-created_by(...)`
+6. NYI/UEM macro definitions
+7. `-export([...]).` — explicit export list (never `-compile(export_all)`)
 
 Maintain this structure when adding new modules.
 
@@ -81,19 +96,22 @@ Maintain this structure when adding new modules.
 - Implementation module: `name_imp.erl` (e.g., `dictionary_imp.erl`)
 - Include/header data: `name_include.erl`
 
+### Key Data Types
+- **Nref**: plain positive `integer()`, starting at 1. No wrapper type. Allocated by `nref_server:get_nref/0`.
+
 ## Known Incomplete Areas (NYI)
 
-- `seerstone:start_phase/3`, `prep_stop/1`, `stop/1`, `config_change/3` — all NYI
-- `database:start_phase/3`, `prep_stop/1`, `stop/1`, `config_change/3` — all NYI
-- `graphdb:start_phase/3`, `prep_stop/1`, `stop/1`, `config_change/3` — all NYI
-- `nref_server:get_another_nref_block/0` — **bug**: line 148 calls `allocate_nrefs` as an atom instead of `nref_allocator:allocate_nrefs()`
-- `dictionary_imp:start_dictionary/2` — references `sfiles:file_exists/2` which does not exist; `file_exists/2` is defined locally in the same file
-- No `.app` source file (only binary) — an `seerstone.app.src` or equivalent should be created
-- No build system — rebar3 should be added
+These are outstanding items — all previously known bugs have been fixed.
+
+- **graphdb worker modules** — all six are gen_server stubs with no real implementation (`graphdb_mgr`, `graphdb_rules`, `graphdb_attr`, `graphdb_class`, `graphdb_instance`, `graphdb_language`)
+- **`nref_include.erl`** — unsupervised, unreferenced; unclear if it's a library module or a duplicate of `nref_server` to be removed
+- **`seerstone:start/2` and `nref:start/2`** — non-normal start types (`{takeover,Node}`, `{failover,Node}`) hit `?NYI`; only relevant in distributed/failover deployments
+- **`code_change/3`** — NYI in all gen_server modules; only relevant for hot code upgrades
+- **App lifecycle callbacks** — `start_phase/3`, `prep_stop/1`, `stop/1`, `config_change/3` return `ok` (no-op) across all five app modules; correct for current deployment model
 
 ## Configuration
 
-`priv/default.config`:
+`apps/seerstone/priv/default.config`:
 ```erlang
 [{seerstone_graph_db, [
   {app_port, 8080},
@@ -102,12 +120,19 @@ Maintain this structure when adding new modules.
 ]}].
 ```
 
+## CI
+
+GitHub Actions workflow at `.github/workflows/ci.yml`:
+- Triggers on push to `main`/`develop` and PRs targeting `main`
+- Runs on `ubuntu-latest`, OTP 27, rebar3 3.24
+- Caches `_build/` keyed on `rebar.lock`
+- Steps: checkout → setup-beam → cache → `rebar3 compile`
+
 ## Git Workflow
 
 - Main branch: `main`
 - Development branch: `develop`
-- `erl_crash.dump` and `priv/` are currently untracked; `erl_crash.dump` should be added to `.gitignore`
-- `.beam` files are committed — consider moving to a build output directory and gitignoring them once a build system is added
+- Feature work goes on `develop`; PRs target `main`
 
 ## Storage Technologies Used
 
@@ -115,4 +140,4 @@ Maintain this structure when adding new modules.
 |---|---|---|
 | DETS | `nref_allocator`, `nref_server` | Persistent disk-based term storage |
 | ETS | `dictionary_imp` | In-memory term storage |
-| File (ETS tab2file) | `dictionary_imp` | Persistent serialization of ETS tables |
+| ETS tab2file | `dictionary_imp` | Persistent serialization of ETS tables |
