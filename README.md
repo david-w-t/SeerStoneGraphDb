@@ -110,7 +110,7 @@ nref (application — started independently)
 
 ## Configuration
 
-Runtime configuration lives in `apps/seerstone/priv/default.config`:
+Release configuration lives in `config/sys.config`:
 
 ```erlang
 [{seerstone_graph_db, [
@@ -119,6 +119,34 @@ Runtime configuration lives in `apps/seerstone/priv/default.config`:
   {index_path, "index"}
 ]}].
 ```
+
+---
+
+## Logging
+
+Logs are written to `log/seerstone.log` (rotating, 5 × 10 MB segments). Errors
+are also echoed to stdout. The `log/` directory is created automatically at
+startup.
+
+### Changing the log level at runtime
+
+No restart is required. From an Erlang shell connected to the running node:
+
+```erlang
+%% Raise or lower the global log level
+logger:set_primary_config(level, debug).
+logger:set_primary_config(level, info).
+
+%% Or target a specific handler only
+logger:set_handler_config(file_handler, level, debug).
+logger:set_handler_config(default, level, warning).
+```
+
+Valid levels in ascending severity: `debug`, `info`, `notice`, `warning`,
+`error`, `critical`, `alert`, `emergency`.
+
+Note: runtime changes do not persist across restarts. The initial level is
+controlled by `logger_level` in `config/sys.config`.
 
 ---
 
