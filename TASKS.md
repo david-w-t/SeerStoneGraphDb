@@ -42,20 +42,13 @@ Each needs its API designed and implemented. Graph nodes are identified by
 Location: `apps/graphdb/src/graphdb_*.erl`
 
 
-## 4. nref_include — purpose unclear
+## ~~4. nref_include — purpose unclear~~ ✓ DONE
 
-`apps/nref/src/nref_include.erl` is described as "the client side module
-for the nref Server" — an in-process block cache that requests blocks from
-`nref_allocator` and hands out individual nrefs locally without going
-through `nref_server`. Its relationship to `nref_server` (which does the
-same thing as a supervised gen_server) needs to be clarified:
-
-- Is `nref_include` intended to be included/used directly in other modules
-  that need nrefs (a library, not a process)?
-- Or is it a duplicate/predecessor of `nref_server` that should be removed?
-
-It is currently unsupervised and not referenced from anywhere in the
-compiled codebase. Decision needed before implementation continues.
+`apps/nref/src/nref_include.erl` was Dallas's earlier unsupervised,
+plain-function predecessor to `nref_server`. It was fully superseded by
+`nref_server` (a proper gen_server supervised by `nref_sup`) and was
+never referenced from anywhere in the compiled codebase. The file has
+been deleted.
 
 
 ## 5. seerstone:start/2 — non-normal start types NYI

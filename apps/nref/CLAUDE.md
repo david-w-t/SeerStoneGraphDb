@@ -21,7 +21,7 @@ application:start(nref).
 | `nref_sup.erl` | OTP `supervisor` callback — supervises allocator and servers |
 | `nref_allocator.erl` | Block-level nref allocator backed by DETS |
 | `nref_server.erl` | Per-request nref server; client of `nref_allocator` |
-| `nref_include.erl` | Shared include/data definitions (purpose TBD) |
+| ~~`nref_include.erl`~~ | Deleted — was Dallas's earlier unsupervised predecessor to `nref_server`; fully superseded |
 | `nref_allocator.dets` | Persistent DETS storage for allocator state |
 
 ## Architecture
@@ -81,7 +81,7 @@ nref_server:confirm_nref_block(Nref, Count)
 The following items are tracked in `TASKS.md`:
 
 - **`nref.erl` callbacks** (`start_phase/3`, `prep_stop/1`, `stop/1`, `config_change/3`) are NYI stubs. (Task 5)
-- **`nref_include.erl` purpose unclear**: Unsupervised and unreferenced; requires design decision. (Task 4)
+- **`nref_include.erl`**: Deleted. Was superseded by `nref_server`. (Task 4 — DONE)
 - **`seerstone:start/2` and `nref:start/2` non-normal clauses**: `?NYI` for `{takeover, Node}` and `{failover, Node}`. (Task 5)
 - **`code_change/3` NYI**: In `nref_allocator.erl`, `nref_server.erl`, and other gen_server modules. (Task 6)
 
@@ -92,16 +92,10 @@ The following items are tracked in `TASKS.md`:
 3.  **`nref_allocator:open/0`**: Fixed (syntax error: `nref_allocator.dets` is not valid Erlang; changed to the string `"nref_allocator.dets"`).
 4.  **`nref_include:check_file/1`**: Fixed (unreachable clause resolved).
 
-**Implementation Note:**
-- `nref_allocator` and `nref_server` currently lack `start_link/0` and are plain API modules. They need to be wrapped as `gen_server` behaviours to be properly supervised by `nref_sup`. This is part of Task 4.
-
 ## DETS File Location
 
-`nref_allocator` opens its DETS file with a hardcoded atom filename:
-```erlang
-File = nref_allocator.dets,
-```
-This resolves relative to the Erlang node's working directory. The file `nref_allocator.dets` is present in the `Nref Server/` directory.
+`nref_allocator` opens its DETS file as `"nref_allocator.dets"` (a string),
+relative to the Erlang node's working directory.
 
 ## Compile
 
@@ -110,5 +104,5 @@ This resolves relative to the Erlang node's working directory. The file `nref_al
 ./rebar3 compile
 
 # manually (from project root):
-erlc apps/nref/src/nref_allocator.erl apps/nref/src/nref_server.erl apps/nref/src/nref_include.erl apps/nref/src/nref_sup.erl apps/nref/src/nref.erl
+erlc apps/nref/src/nref_allocator.erl apps/nref/src/nref_server.erl apps/nref/src/nref_sup.erl apps/nref/src/nref.erl
 ```
