@@ -22,24 +22,49 @@ Related reference files (not compiled, kept for design context):
 already present; the compiler now warns about unused functions normally.
 
 
-## 3. graphdb worker modules — all are empty stubs
+## ~~3. graphdb worker modules~~ ✓ DONE (branch: graphdb_sonnet46)
 
-All six graphdb workers exist as gen_server stubs that start cleanly but
-do nothing:
+All six graphdb workers implemented as inline gen_server modules.
+See branch `graphdb_sonnet46` (commit `cefcf94`).
 
-| Module | Intended role |
-|---|---|
-| `graphdb_mgr` | Primary coordinator for graphdb operations |
-| `graphdb_rules` | Storage and enforcement of graph rules |
-| `graphdb_attr` | Node/edge attribute management |
-| `graphdb_class` | Class/type/schema definitions |
-| `graphdb_instance` | Creation and retrieval of graph node/edge instances |
-| `graphdb_language` | Graph query language parsing and execution |
+| Module | Storage | Role |
+|---|---|---|
+| `graphdb_class` | ETS + `tab2file` | Class/schema hierarchy; root class seeded at ClassId=0 |
+| `graphdb_attr` | ETS + `tab2file` | Attribute store keyed by `{Nref, Name}` |
+| `graphdb_rules` | ETS + `tab2file` | Rule store with `evaluate/2`; events: create/delete node/edge, set_attr |
+| `graphdb_instance` | DETS | Node `{Nref, node, ClassId, Props}` and edge `{Nref, edge, From, To, ClassId, Props}` instances |
+| `graphdb_mgr` | None (coordinator) | Facade over all workers; enforces rules before mutations |
+| `graphdb_language` | None (interpreter) | Erlang-term DSL: `get`, `find_by_attr`, `match`, `traverse` (BFS), `and_query`, `or_query` |
 
-Each needs its API designed and implemented. Graph nodes are identified by
-**Nrefs** (plain `integer()`, allocated by `nref_server:get_nref/0`).
+Design decisions made:
+- Nodes **and** edges are first-class — both receive Nrefs from `nref_server:get_nref/0`
+- Classes are also identified by Nrefs (root = 0)
+- Logic lives inline in each gen_server (no separate `_imp` modules)
+- `graphdb_language` uses an Erlang-term DSL, not a text parser
 
-Location: `apps/graphdb/src/graphdb_*.erl`
+### Comparison with `graphdb_minimax25`
+
+A parallel implementation exists on branch `graphdb_minimax25`. Key differences:
+
+| Dimension | `graphdb_sonnet46` | `graphdb_minimax25` |
+|---|---|---|
+| Edge identity | Nref (from `nref_server`) | Separate auto-increment integer — **not** a Nref |
+| Class identity | Nref integer | Atom (e.g. `thing`, `entity`) |
+| Durability | DETS (instances) + `tab2file` (others) | ETS only — **data lost on restart** |
+| Attr index | Single table, scan on `find_by_attr` | Two-table with secondary `duplicate_bag` index — faster lookups |
+| Class hierarchy | Scan-based subclass lookup | Eagerly maintained descendant lists (faster reads, complex delete) |
+| Query language | Simple term DSL, BFS traversal | SQL-like string parser (`SELECT node WHERE ...`) + BFS/DFS, but parser is skeletal |
+| Code style | Preserves Dallas's header conventions | More modern; adds `-spec`, `-type`, `logger.hrl` include; diverges from original style |
+
+Advantages of `graphdb_minimax25` worth considering for a merge:
+- Two-table attr index (secondary `duplicate_bag`) enables O(1) `find_by_attr` vs full scan
+- Richer `graphdb_language` API surface (`select/insert/update/delete/traverse` as named functions)
+- `-spec` annotations improve dialyzer coverage
+
+Advantages of `graphdb_sonnet46`:
+- All identifiers (nodes, edges, classes) are Nrefs — consistent with Dallas's design intent
+- DETS persistence means instance data survives restarts
+- Simpler, closer to the original codebase style
 
 
 ## ~~4. nref_include — purpose unclear~~ ✓ DONE
@@ -106,10 +131,10 @@ present configuration.
 
 ## Priority Order
 
-1. **dictionary_server + term_server stubs** — blocks `dictionary` app startup
-2. **graphdb worker implementations** — core graph database functionality
-3. **dictionary_imp export_all** — code quality / hygiene
-4. **nref_include clarification** — design decision needed
+1. ~~**dictionary_server + term_server stubs**~~ ✓ DONE
+2. ~~**dictionary_imp export_all**~~ ✓ DONE
+3. ~~**nref_include clarification**~~ ✓ DONE
+4. **graphdb worker implementations** — two competing branches; merge decision needed
 5. **seerstone/nref start/2 non-normal clause** — low priority, distributed only
 6. **code_change/3** — low priority, hot upgrades only
 7. **Old directory cleanup** — housekeeping
