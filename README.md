@@ -110,7 +110,7 @@ SeerStoneGraphDb implements the knowledge graph model described in
 |--------------------|----------------------------------------------------------------------------------------------------------------------|
 | **Instance Node**  | Concrete entity — has a name attribute, class membership, compositional parent, and relationships to other instances |
 | **Class Node**     | Type/schema — has a class name attribute, an instance name attribute, and qualifying characteristics                 |
-| **Attribute Node** | Name or relationship descriptor stored in the attribute library                                                      |
+| **Attribute Node** | Name attribute, relationship attribute, or literal attribute stored in the attribute library                         |
 
 ### Hierarchy Systems
 
@@ -128,15 +128,18 @@ Example: Ford→makes→Taurus / Taurus→made-by→Ford
 
 ### Inheritance
 
-1. Instances inherit **attributes** (not values) from their class(es).
-2. Local values on an instance override everything else.
-3. Remaining unbound attributes inherit from: class-level bound values → compositional ancestors (unbroken chain) → directly connected nodes (one level only).
+Priority order — each step applies only to attributes not yet resolved by a higher-priority step:
+
+1. **Local values** (highest priority — override all else)
+2. **Class-level bound values** (values explicitly bound at the class)
+3. **Compositional ancestors** (unbroken chain upward only)
+4. **Directly connected nodes** (one level deep only; lowest priority)
 
 ### graphdb Workers
 
 | Module             | Role                                                                             |
 |--------------------|----------------------------------------------------------------------------------|
-| `graphdb_attr`     | Attribute library — name attributes, relationship attributes, relationship types |
+| `graphdb_attr`     | Attribute library — name attributes, literal attributes, relationship attributes, relationship types |
 | `graphdb_class`    | Taxonomic hierarchy — class nodes, qualifying characteristics, class inheritance |
 | `graphdb_instance` | Instance nodes — creation, retrieval, compositional hierarchy                    |
 | `graphdb_rules`    | Graph rules — pattern recognition and relationship constraints                   |
