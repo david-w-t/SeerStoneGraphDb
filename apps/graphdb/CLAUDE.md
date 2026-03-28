@@ -76,12 +76,12 @@ Example:
 
 ### Inheritance Rules
 
-Priority order — each step applies only to attributes not yet resolved by a higher-priority step:
-
-1. **Local values** (highest priority — override all else)
-2. **Class-level bound values** (values explicitly bound at the class)
-3. **Compositional ancestors** (unbroken chain upward only)
-4. **Directly connected nodes** (one level deep only; lowest priority)
+1. Instances inherit **attributes** (not values) from their class(es).
+2. Local values override all inherited values.
+3. For attributes without local values, resolve in order:
+   - Class-level bound values
+   - Compositional ancestors (unbroken chain upward)
+   - Directly connected nodes (one level only)
 
 ### Record Structure
 
@@ -104,8 +104,7 @@ Priority order — each step applies only to attributes not yet resolved by a hi
 
 Maintains all named attribute concepts used as arc labels.
 
-- Name attributes: class name attributes, instance name attributes
-- Literal attributes: scalar/external values stored directly on a node (numbers, strings, URLs, filenames) — not graph nodes; no Nref; do not participate in relationships
+- Name attributes: class name attributes, instance name attributes, external name attributes
 - Relationship attributes: grouped into relationship types (e.g., `location_of` / `located_in`)
 - API to implement: `create_name_attribute/1`, `create_relationship_attribute/2`,
   `create_relationship_type/1`, `get_attribute/1`, `list_relationship_types/0`
@@ -161,7 +160,7 @@ The following callbacks in `graphdb.erl` are stubs that call `?NYI(...)` and mus
 - `config_change/3` — runtime config change notification
 
 All six worker modules (`graphdb_mgr`, `graphdb_rules`, `graphdb_attr`, `graphdb_class`,
-`graphdb_instance`, `graphdb_language`) are empty gen_server stubs. See `TASKS.md` task 1
+`graphdb_instance`, `graphdb_language`) are empty gen_server stubs. See `TASKS.md` task 3
 for the detailed sub-task breakdown.
 
 ## Key Design Notes
@@ -181,7 +180,12 @@ for the detailed sub-task breakdown.
 erlc apps/graphdb/src/graphdb_sup.erl apps/graphdb/src/graphdb.erl
 ```
 
-## Remaining Work
+## TASKS.md Alignment
 
-All six worker modules are empty gen_server stubs. See `TASKS.md` task 1
-for the detailed sub-task breakdown and priority order.
+Key items marked as DONE in `TASKS.md`:
+- Dictionary subsystem worker modules.
+- `dictionary_imp` export_all flag.
+- `nref_include.erl` deleted (superseded by `nref_server`).
+
+Remaining high-priority items:
+- Implementation of the six graphdb worker modules (tasks 3a–3f).

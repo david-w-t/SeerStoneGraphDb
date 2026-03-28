@@ -61,8 +61,12 @@ The following callbacks in `database.erl` are stubs:
 erlc apps/database/src/database_sup.erl apps/database/src/database.erl
 ```
 
-## Remaining Work
+## TASKS.md Alignment
 
-See `apps/graphdb/CLAUDE.md` and `TASKS.md` task 1 for the graphdb worker
-implementation work that must complete before this application is fully
-functional.
+Key items marked as DONE in `TASKS.md`:
+- Dictionary subsystem worker modules (`dictionary_server`, `term_server`).
+- `dictionary_imp` export_all flag removed.
+- `nref_include.erl` deleted (superseded by `nref_server`).
+
+Remaining high-priority items:
+- Implementation of the six graphdb worker modules (see `apps/graphdb/CLAUDE.md` and `TASKS.md` task 3).

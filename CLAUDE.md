@@ -58,7 +58,7 @@ nref (application — started independently)
 ```
 
 `nref_include.erl` has been deleted — it was Dallas's earlier unsupervised
-predecessor to `nref_server` and is fully superseded by it.
+predecessor to `nref_server` and was fully superseded (TASKS.md item 4 — DONE).
 
 ## Common Coding Conventions
 
@@ -112,7 +112,7 @@ This database is an implementation of the knowledge graph model described in
 | **Node / Concept**          | A record identified by an Nref (positive integer)                                                |
 | **Instance Node**           | Concrete entity: has a name attribute, class membership, compositional parent, and relationships |
 | **Class Node**              | Type/schema: has a class name attribute, instance name attribute, and qualifying characteristics |
-| **Attribute Node**          | Name attribute, relationship attribute, or literal attribute stored in the attribute library     |
+| **Attribute Node**          | Name or relationship descriptor in the attribute library                                         |
 | **Relationship (Arc)**      | Reciprocal connection between instances; stored as `{Characterization, Value, Reciprocal}`       |
 | **Reference Number (Nref)** | Globally unique `integer()` allocated by `nref_server:get_nref/0`                                |
 
@@ -124,12 +124,9 @@ This database is an implementation of the knowledge graph model described in
 
 ### Inheritance Rules
 
-Priority order — each step applies only to attributes not yet resolved by a higher-priority step:
-
-1. **Local values** (highest priority — override all else)
-2. **Class-level bound values** (values explicitly bound at the class)
-3. **Compositional ancestors** (unbroken chain upward only)
-4. **Directly connected nodes** (one level deep only; lowest priority)
+1. Instances inherit attributes (not values) from their class(es).
+2. Local values on an instance override all inherited values.
+3. Remaining attributes without local values inherit from: class-level bound values → compositional ancestors (unbroken chain) → directly connected nodes (one level only).
 
 ### Record Structure
 
@@ -149,7 +146,7 @@ Every graph record maps to:
 
 | Module             | Knowledge model role                                                                           |
 |--------------------|------------------------------------------------------------------------------------------------|
-| `graphdb_attr`     | Maintains the attribute library (name attributes, literal attributes, relationship attributes, relationship types) |
+| `graphdb_attr`     | Maintains the attribute library (name attributes, relationship attributes, relationship types) |
 | `graphdb_class`    | Manages the taxonomic hierarchy: class nodes, qualifying characteristics, inheritance          |
 | `graphdb_instance` | Creates and retrieves instance nodes; manages compositional hierarchy                          |
 | `graphdb_rules`    | Stores and enforces graph rules (pattern recognition, relationship constraints)                |
@@ -165,10 +162,15 @@ These are outstanding items — all previously known bugs have been fixed.
 - **`code_change/3`** — NYI in all gen_server modules; only relevant for hot code upgrades
 - **App lifecycle callbacks** — `start_phase/3`, `prep_stop/1`, `stop/1`, `config_change/3` return `ok` (no-op) across all five app modules; correct for current deployment model
 
-## Remaining Work
+## TASKS.md Alignment
 
-The six graphdb worker modules are the primary remaining implementation work.
-See `TASKS.md` for the full task list and priority order.
+This guide reflects the state of the project as of `TASKS.md` generation. Key items marked as DONE in `TASKS.md` include:
+- Dictionary subsystem worker modules.
+- `dictionary_imp` export_all flag.
+- `nref_include.erl` deleted (superseded by `nref_server`).
+
+Remaining high-priority items include:
+- Implementation of the six graphdb worker modules (see Knowledge Model section above for roles).
 
 ## Configuration
 
