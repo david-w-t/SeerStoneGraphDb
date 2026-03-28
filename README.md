@@ -98,13 +98,60 @@ nref (application — started independently)
 
 ---
 
+## Knowledge Model
+
+SeerStoneGraphDb implements the knowledge graph model described in
+`knowledge-graph-database-guide.md` (derived from US patents 5,379,366;
+5,594,837; 5,878,406 — Noyes; and Cogito knowledge center documentation).
+
+### Node Types
+
+| Type               | Description                                                                                                          |
+|--------------------|----------------------------------------------------------------------------------------------------------------------|
+| **Instance Node**  | Concrete entity — has a name attribute, class membership, compositional parent, and relationships to other instances |
+| **Class Node**     | Type/schema — has a class name attribute, an instance name attribute, and qualifying characteristics                 |
+| **Attribute Node** | Name or relationship descriptor stored in the attribute library                                                      |
+
+### Hierarchy Systems
+
+- **Taxonomic hierarchy** ("is a") — class structure; child inherits all parent attributes and adds distinguishing qualifiers
+- **Compositional hierarchy** ("part of") — instance structure; big things composed of smaller things
+- The two hierarchies are **perpendicular** — they intersect only at instance-to-class membership
+
+### Relationships
+
+All relationships are **reciprocal**. Each arc stores:
+```
+{Characterization, Value, ReciprocalCharacterization}
+```
+Example: Ford→makes→Taurus / Taurus→made-by→Ford
+
+### Inheritance
+
+1. Instances inherit **attributes** (not values) from their class(es).
+2. Local values on an instance override everything else.
+3. Remaining unbound attributes inherit from: class-level bound values → compositional ancestors (unbroken chain) → directly connected nodes (one level only).
+
+### graphdb Workers
+
+| Module             | Role                                                                             |
+|--------------------|----------------------------------------------------------------------------------|
+| `graphdb_attr`     | Attribute library — name attributes, relationship attributes, relationship types |
+| `graphdb_class`    | Taxonomic hierarchy — class nodes, qualifying characteristics, class inheritance |
+| `graphdb_instance` | Instance nodes — creation, retrieval, compositional hierarchy                    |
+| `graphdb_rules`    | Graph rules — pattern recognition and relationship constraints                   |
+| `graphdb_language` | Query language — parsing and executing graph queries                             |
+| `graphdb_mgr`      | Primary coordinator — routes operations across the other five workers            |
+
+---
+
 ## Storage
 
-| Technology | Used by | Purpose |
-|---|---|---|
-| DETS | `nref_allocator`, `nref_server` | Persistent disk-based term storage |
-| ETS | `dictionary_imp` | In-memory term storage |
-| ETS tab2file | `dictionary_imp` | Persistent serialization of ETS tables |
+| Technology   | Used by                         | Purpose                                |
+|--------------|---------------------------------|----------------------------------------|
+| DETS         | `nref_allocator`, `nref_server` | Persistent disk-based term storage     |
+| ETS          | `dictionary_imp`                | In-memory term storage                 |
+| ETS tab2file | `dictionary_imp`                | Persistent serialization of ETS tables |
 
 ---
 
@@ -161,4 +208,5 @@ Key conventions at a glance:
 - Every module uses `?NYI(X)` and `?UEM(F, X)` macros for unimplemented paths
 - Module names follow the pattern: `name.erl`, `name_sup.erl`, `name_server.erl`, `name_imp.erl`
 - Graph nodes are identified by **Nrefs** — plain positive integers allocated by `nref_server:get_nref/0`
+- See `knowledge-graph-database-guide.md` for the knowledge model behind the graphdb workers
 - Feature work goes on `develop`; PRs target `main`

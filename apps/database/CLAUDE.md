@@ -10,8 +10,6 @@
 |---|---|
 | `database.erl` | OTP `application` behaviour callback module |
 | `database_sup.erl` | OTP `supervisor` — supervises graphdb and dictionary subsystems |
-| `database-1.boot` / `.rel` / `.script` | OTP release files |
-| `database.beam` / `database_sup.beam` | Compiled BEAM bytecode |
 
 ## Application Lifecycle
 
@@ -31,8 +29,8 @@ seerstone_sup:init/1
 ```
 seerstone_sup (one_for_one, MaxR=5, MaxT=5000)
   └── database_sup   ← this application's supervisor
-        ├── graphdb_sup    (from graphdb/)
-        └── dictionary_sup (from Dictionary/)
+        ├── graphdb_sup    (from apps/graphdb/)
+        └── dictionary_sup (from apps/dictionary/)
 ```
 
 `database_sup` is declared as `Type = supervisor`, `Shutdown = infinity` in `seerstone_sup`'s child spec — giving the subtree unlimited time to shut down gracefully.
@@ -52,30 +50,23 @@ The following callbacks in `database.erl` are stubs:
 
 - `database_sup` receives `StartArgs` forwarded from `database:start/2`
 - The `database` application's `.app` file should declare `graphdb` and `dictionary` as included applications
-- Both `database.beam` and `database_sup.beam` are also present in the project root (copies — keep in sync or resolve)
-
-## TASKS.md Alignment
-
-This guide reflects the state of the project as of `TASKS.md` generation. Key items marked as DONE in `TASKS.md` include:
-- Dictionary subsystem worker modules.
-- `dictionary_imp` export_all flag.
-
-Remaining high-priority items include:
-- Implementation of the six graphdb worker modules.
-- Clarification of `nref_include.erl`'s purpose.
 
 ## Compile
 
 ```sh
-erlc Dictionary/dictionary_sup.erl Dictionary/dictionary_imp.erl Dictionary/dictionary.erl
+# with rebar3 (from project root — preferred):
+./rebar3 compile
+
+# manually (from project root):
+erlc apps/database/src/database_sup.erl apps/database/src/database.erl
 ```
 
 ## TASKS.md Alignment
 
-This guide reflects the state of the project as of `TASKS.md` generation. Key items marked as DONE in `TASKS.md` include:
-- Dictionary subsystem worker modules.
-- `dictionary_imp` export_all flag.
+Key items marked as DONE in `TASKS.md`:
+- Dictionary subsystem worker modules (`dictionary_server`, `term_server`).
+- `dictionary_imp` export_all flag removed.
+- `nref_include.erl` deleted (superseded by `nref_server`).
 
-Remaining high-priority items include:
-- Implementation of the six graphdb worker modules.
-- Clarification of `nref_include.erl`'s purpose.
+Remaining high-priority items:
+- Implementation of the six graphdb worker modules (see `apps/graphdb/CLAUDE.md` and `TASKS.md` task 3).

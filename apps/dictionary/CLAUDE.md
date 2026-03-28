@@ -69,15 +69,19 @@ Each dictionary runs as an **independent registered process**. The process name 
 ## Compile
 
 ```sh
-erlc Dictionary/dictionary_sup.erl Dictionary/dictionary_imp.erl Dictionary/dictionary.erl
+# with rebar3 (from project root — preferred):
+./rebar3 compile
+
+# manually (from project root):
+erlc apps/dictionary/src/dictionary_sup.erl apps/dictionary/src/dictionary_imp.erl apps/dictionary/src/dictionary.erl
 ```
 
 ## TASKS.md Alignment
 
-This guide reflects the state of the project as of `TASKS.md` generation. Key items marked as DONE in `TASKS.md` include:
-- Dictionary subsystem worker modules.
-- `dictionary_imp` export_all flag.
+Key items marked as DONE in `TASKS.md`:
+- Dictionary subsystem worker modules (`dictionary_server`, `term_server`).
+- `dictionary_imp` export_all flag removed.
+- `nref_include.erl` deleted (superseded by `nref_server`).
 
-Remaining high-priority items include:
-- Implementation of the six graphdb worker modules.
-- Clarification of `nref_include.erl`'s purpose.
+Remaining high-priority items:
+- Implementation of the six graphdb worker modules (see `apps/graphdb/CLAUDE.md` and `TASKS.md` task 3).
