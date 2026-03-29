@@ -6,6 +6,15 @@ project. The goal is to finish and extend his work. PRs are welcome. Treat this
 codebase with care — preserve Dallas's style and conventions wherever possible
 when completing NYI stubs.
 
+### Current Status
+
+The project compiles clean with zero warnings (OTP 27 / rebar3 3.24). The
+`nref` and `dictionary` subsystems are fully implemented. The six `graphdb`
+worker modules (`graphdb_attr`, `graphdb_class`, `graphdb_instance`,
+`graphdb_rules`, `graphdb_language`, `graphdb_mgr`) exist as working
+gen_server stubs but contain no graph logic — this is the primary remaining
+implementation work. See `TASKS.md` for a prioritised task list.
+
 ---
 
 ## Requirements
@@ -160,23 +169,40 @@ Priority order — each step applies only to attributes not yet resolved by a hi
 
 ## Configuration
 
-Release configuration lives in `config/sys.config`:
+`config/sys.config` is used for releases and the interactive shell. It
+configures both the OTP logger and the application settings:
 
 ```erlang
-[{seerstone_graph_db, [
-  {app_port, 8080},
-  {data_path, "data"},
-  {index_path, "index"}
-]}].
+[
+  {kernel, [
+    {logger_level, info},
+    {logger, [
+      %% Console handler — errors and above to stdout.
+      {handler, default, logger_std_h, #{...}},
+      %% File handler — info and above to log/seerstone.log (rotating, 5 × 10 MB).
+      {handler, file_handler, logger_std_h, #{...}}
+    ]}
+  ]},
+  {seerstone_graph_db, [
+    {app_port,   8080},
+    {data_path,  "data"},
+    {index_path, "index"}
+  ]}
+].
 ```
+
+`apps/seerstone/priv/default.config` carries only the `seerstone_graph_db`
+stanza and is used as a fallback when no `sys.config` is present.
+
+**Note:** the `log/` directory must exist before starting the system; it is
+not created automatically. Create it once with `mkdir log`.
 
 ---
 
 ## Logging
 
-Logs are written to `log/seerstone.log` (rotating, 5 × 10 MB segments). Errors
-are also echoed to stdout. The `log/` directory is created automatically at
-startup.
+Logs are written to `log/seerstone.log` (rotating, 5 × 10 MB segments).
+Errors are also echoed to stdout.
 
 ### Changing the log level at runtime
 
