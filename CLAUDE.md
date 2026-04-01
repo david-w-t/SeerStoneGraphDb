@@ -31,9 +31,6 @@ SeerStoneGraphDb/
 └── CLAUDE.md          # This file
 ```
 
-Old pre-rebar3 directories (`Database/`, `graphdb/`, `Dictionary/`, `Nref Server/`) remain
-as historical design references. They are not compiled by rebar3.
-
 ## OTP Supervision Tree
 
 ```
