@@ -142,8 +142,8 @@
 %% If no State is returned, [] is used. 
 %%--------------------------------------------------------------------- 
 
-start(Type, StartArgs) ->
-    case database_sup:start_link(StartArgs) of
+start(_Type, _StartArgs) ->
+    case database_sup:start_link() of
 		{ok, Pid} ->
 			{ok, Pid};
 		ignore -> 
@@ -151,7 +151,7 @@ start(Type, StartArgs) ->
 		{error, Reason} ->	
 			{error, Reason};
 		MSG ->
-			?UEM({start , {Type, StartArgs}}, MSG)
+			?UEM(start, MSG)
     end.
 
 
