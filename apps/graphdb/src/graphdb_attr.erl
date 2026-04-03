@@ -25,11 +25,15 @@
 %%
 %%              At bootstrap the server seeds a special literal attribute
 %%              named <<"relationship_avp">> into the library.  Its Nref
-%%              is stored in the ETS table under the key
+%%              is stored in the primary DETS table under the key
 %%              {bootstrap, relationship_avp_nref}.  Any attribute node
 %%              that carries an AVP #{attribute=>RelAvpNref, value=>true}
 %%              is thereby marked as intended for use on relationship arcs
 %%              rather than on node records directly.
+%%
+%%              All three DETS tables are persisted to disk and survive
+%%              node restarts.  On restart the tables are re-opened and
+%%              bootstrap seeding is skipped (data already present).
 %%---------------------------------------------------------------------
 %% Revision History
 %%---------------------------------------------------------------------
@@ -77,9 +81,10 @@
 				 end)).
 
 %%---------------------------------------------------------------------
-%% ETS table names
+%% DETS table names and file names
 %%---------------------------------------------------------------------
-%% graphdb_attr       — primary store keyed by Nref
+%% graphdb_attr       — primary store keyed by Nref (integer) or
+%%                      special bootstrap key tuple.
 %%   Rows: {Nref, Record}
 %%   Special rows:
 %%     {{bootstrap, relationship_avp_nref}, Nref}
@@ -90,10 +95,16 @@
 %%
 %% graphdb_attr_types — relationship-type membership
 %%   Rows: {TypeNref, [MemberNref]}
+%%
+%% File names are relative to the node's working directory, consistent
+%% with nref_allocator.dets and nref_server.dets.
 %%---------------------------------------------------------------------
--define(TAB,      graphdb_attr).
--define(IDX,      graphdb_attr_index).
--define(TYPES,    graphdb_attr_types).
+-define(TAB,        graphdb_attr).
+-define(TAB_FILE,   "graphdb_attr.dets").
+-define(IDX,        graphdb_attr_index).
+-define(IDX_FILE,   "graphdb_attr_index.dets").
+-define(TYPES,      graphdb_attr_types).
+-define(TYPES_FILE, "graphdb_attr_types.dets").
 
 
 %%---------------------------------------------------------------------
@@ -292,13 +303,20 @@ relationship_avp_nref() ->
 %%---------------------------------------------------------------------
 %% init([]) -> {ok, State}
 %%
-%% Creates the ETS tables and seeds the bootstrap attribute library.
+%% Opens the three DETS tables.  Seeds the bootstrap attribute library
+%% only when the primary table is newly created (did not previously
+%% exist on disk).
 %%---------------------------------------------------------------------
 init([]) ->
-	ets:new(?TAB,   [named_table, set,     protected, {keypos, 1}]),
-	ets:new(?IDX,   [named_table, set,     protected, {keypos, 1}]),
-	ets:new(?TYPES, [named_table, set,     protected, {keypos, 1}]),
-	ok = seed_bootstrap(),
+	TabNew   = open_dets(?TAB,   ?TAB_FILE),
+	_IdxNew  = open_dets(?IDX,   ?IDX_FILE),
+	_TypeNew = open_dets(?TYPES, ?TYPES_FILE),
+	case TabNew of
+	new ->
+		ok = seed_bootstrap();
+	existing ->
+		ok
+	end,
 	{ok, #{}}.
 
 
@@ -347,7 +365,7 @@ handle_call(list_relationship_types, _From, State) ->
 
 handle_call(relationship_avp_nref, _From, State) ->
 	[{{bootstrap, relationship_avp_nref}, Nref}] =
-		ets:lookup(?TAB, {bootstrap, relationship_avp_nref}),
+		dets:lookup(?TAB, {bootstrap, relationship_avp_nref}),
 	{reply, Nref, State};
 
 handle_call(Request, From, State) ->
@@ -375,6 +393,9 @@ handle_info(Info, State) ->
 %% terminate/2
 %%---------------------------------------------------------------------
 terminate(_Reason, _State) ->
+	dets:close(?TAB),
+	dets:close(?IDX),
+	dets:close(?TYPES),
 	ok.
 
 
@@ -391,9 +412,32 @@ code_change(_OldVsn, State, _Extra) ->
 %%=====================================================================
 
 %%---------------------------------------------------------------------
+%% open_dets(Name, File) -> new | existing
+%%
+%% Opens a DETS table, creating the file if it does not yet exist.
+%% Returns 'new' when the file was just created, 'existing' otherwise.
+%% Exits with reason graphdb_attr_dets_open on failure.
+%%---------------------------------------------------------------------
+open_dets(Name, File) ->
+	IsExisting = filelib:is_file(File),
+	logger:info("opening dets file: ~p", [File]),
+	case dets:open_file(Name, [{file, File}]) of
+	{ok, Name} ->
+		case IsExisting of
+		true  -> existing;
+		false -> new
+		end;
+	{error, Reason} ->
+		logger:error("cannot open dets table ~p: ~p", [File, Reason]),
+		exit(graphdb_attr_dets_open)
+	end.
+
+
+%%---------------------------------------------------------------------
 %% seed_bootstrap() -> ok
 %%
-%% Seeds the minimum attribute library entries required at startup:
+%% Seeds the minimum attribute library entries required at startup.
+%% Called only when the primary DETS table is newly created.
 %%
 %%   1. A name attribute named <<"attr_name">> — used to attach a
 %%      human-readable name to every attribute node.
@@ -405,29 +449,33 @@ code_change(_OldVsn, State, _Extra) ->
 %%---------------------------------------------------------------------
 seed_bootstrap() ->
 	%% 1. Seed the name attribute used to name all attribute nodes.
+	%%    Its own AVP list is empty because attr_name cannot name itself
+	%%    during bootstrapping.
 	{ok, NameAttrNref} = raw_create_name_attribute(<<"attr_name">>),
 
 	%% 2. Seed the relationship_avp flag literal attribute.
-	%%    At this point the flag attribute itself does not yet exist,
-	%%    so its own AVP list cannot reference itself — it is seeded
-	%%    with an empty AVP list and identified by its reserved name.
+	%%    Its own AVP list carries its name (using NameAttrNref) but
+	%%    cannot carry the relationship_avp flag on itself yet — that
+	%%    would be circular.  The flag is identified by its reserved name.
 	{ok, RelAvpNref} = raw_create_literal_attribute(
-		<<"relationship_avp">>, boolean, NameAttrNref, []),
+		<<"relationship_avp">>, boolean, NameAttrNref,
+		[#{attribute => NameAttrNref, value => <<"relationship_avp">>}]),
 
-	%% Store the well-known Nref for use by subsequent calls.
-	ets:insert(?TAB, {{bootstrap, relationship_avp_nref}, RelAvpNref}),
+	%% Store the well-known Nref for fast retrieval by
+	%% relationship_avp_nref/0 and do_create_literal_attribute/3.
+	dets:insert(?TAB, {{bootstrap, relationship_avp_nref}, RelAvpNref}),
 	ok.
 
 
 %%---------------------------------------------------------------------
-%% raw_create_name_attribute(Name) -> {ok, Nref} | {error, duplicate}
+%% raw_create_name_attribute(Name) -> {ok, Nref}
 %%
-%% Low-level name-attribute creation; called during bootstrap before
-%% the public API is available.
+%% Low-level name-attribute creation used during bootstrap.
+%% Idempotent: returns the existing Nref if the name already exists.
 %%---------------------------------------------------------------------
 raw_create_name_attribute(Name) ->
 	Key = {name, Name},
-	case ets:lookup(?IDX, Key) of
+	case dets:lookup(?IDX, Key) of
 	[{Key, ExistingNref}] ->
 		{ok, ExistingNref};
 	[] ->
@@ -438,38 +486,37 @@ raw_create_name_attribute(Name) ->
 			name                 => Name,
 			attribute_value_pairs => []
 		},
-		ets:insert(?TAB, {Nref, Record}),
-		ets:insert(?IDX, {Key, Nref}),
+		dets:insert(?TAB, {Nref, Record}),
+		dets:insert(?IDX, {Key, Nref}),
 		nref_server:confirm_nref(Nref),
 		{ok, Nref}
 	end.
 
 
 %%---------------------------------------------------------------------
-%% raw_create_literal_attribute(Name, ValueType, NameAttrNref, ExtraAvps)
-%%   -> {ok, Nref} | {error, duplicate}
+%% raw_create_literal_attribute(Name, ValueType, NameAttrNref, Avps)
+%%   -> {ok, Nref}
 %%
-%% Low-level literal-attribute creation; called during bootstrap.
-%% ExtraAvps is a list of #{attribute=>Nref, value=>Val} maps to
-%% pre-populate the attribute_value_pairs field.
+%% Low-level literal-attribute creation used during bootstrap.
+%% Avps is the full attribute_value_pairs list to store on the record.
+%% Idempotent: returns the existing Nref if the name already exists.
 %%---------------------------------------------------------------------
-raw_create_literal_attribute(Name, ValueType, NameAttrNref, ExtraAvps) ->
+raw_create_literal_attribute(Name, ValueType, _NameAttrNref, Avps) ->
 	Key = {literal, Name},
-	case ets:lookup(?IDX, Key) of
+	case dets:lookup(?IDX, Key) of
 	[{Key, ExistingNref}] ->
 		{ok, ExistingNref};
 	[] ->
 		Nref = nref_server:get_nref(),
-		NameAvp = #{attribute => NameAttrNref, value => Name},
 		Record = #{
 			nref                 => Nref,
 			type                 => literal,
 			name                 => Name,
 			value_type           => ValueType,
-			attribute_value_pairs => [NameAvp | ExtraAvps]
+			attribute_value_pairs => Avps
 		},
-		ets:insert(?TAB, {Nref, Record}),
-		ets:insert(?IDX, {Key, Nref}),
+		dets:insert(?TAB, {Nref, Record}),
+		dets:insert(?IDX, {Key, Nref}),
 		nref_server:confirm_nref(Nref),
 		{ok, Nref}
 	end.
@@ -480,32 +527,32 @@ raw_create_literal_attribute(Name, ValueType, NameAttrNref, ExtraAvps) ->
 %%---------------------------------------------------------------------
 do_create_name_attribute(Name) ->
 	Key = {name, Name},
-	case ets:lookup(?IDX, Key) of
+	case dets:lookup(?IDX, Key) of
 	[{Key, _Nref}] ->
 		{error, duplicate};
 	[] ->
 		Nref = nref_server:get_nref(),
 		NameAttrNref = bootstrap_name_attr_nref(),
-		NameAvp = #{attribute => NameAttrNref, value => Name},
 		Record = #{
 			nref                 => Nref,
 			type                 => name,
 			name                 => Name,
-			attribute_value_pairs => [NameAvp]
+			attribute_value_pairs => [#{attribute => NameAttrNref, value => Name}]
 		},
-		ets:insert(?TAB, {Nref, Record}),
-		ets:insert(?IDX, {Key, Nref}),
+		dets:insert(?TAB, {Nref, Record}),
+		dets:insert(?IDX, {Key, Nref}),
 		nref_server:confirm_nref(Nref),
 		{ok, Nref}
 	end.
 
 
 %%---------------------------------------------------------------------
-%% do_create_literal_attribute(Name, ValueType, Opts) -> {ok, Nref} | {error, duplicate}
+%% do_create_literal_attribute(Name, ValueType, Opts)
+%%   -> {ok, Nref} | {error, duplicate}
 %%---------------------------------------------------------------------
 do_create_literal_attribute(Name, ValueType, Opts) ->
 	Key = {literal, Name},
-	case ets:lookup(?IDX, Key) of
+	case dets:lookup(?IDX, Key) of
 	[{Key, _Nref}] ->
 		{error, duplicate};
 	[] ->
@@ -527,8 +574,8 @@ do_create_literal_attribute(Name, ValueType, Opts) ->
 			value_type           => ValueType,
 			attribute_value_pairs => [NameAvp | ExtraAvps]
 		},
-		ets:insert(?TAB, {Nref, Record}),
-		ets:insert(?IDX, {Key, Nref}),
+		dets:insert(?TAB, {Nref, Record}),
+		dets:insert(?IDX, {Key, Nref}),
 		nref_server:confirm_nref(Nref),
 		{ok, Nref}
 	end.
@@ -538,14 +585,14 @@ do_create_literal_attribute(Name, ValueType, Opts) ->
 %% do_create_relationship_attribute(Name, RecName, Opts)
 %%   -> {ok, {ForwardNref, ReciprocalNref}} | {error, duplicate}
 %%
-%% Both sides are created atomically; either both succeed or neither
+%% Both sides are created atomically: either both succeed or neither
 %% is stored.  If either name already exists the call returns
 %% {error, duplicate} without creating anything.
 %%---------------------------------------------------------------------
 do_create_relationship_attribute(Name, RecName, _Opts) ->
 	KeyFwd = {relationship, Name},
 	KeyRec = {relationship, RecName},
-	case {ets:lookup(?IDX, KeyFwd), ets:lookup(?IDX, KeyRec)} of
+	case {dets:lookup(?IDX, KeyFwd), dets:lookup(?IDX, KeyRec)} of
 	{[], []} ->
 		NrefFwd = nref_server:get_nref(),
 		NrefRec = nref_server:get_nref(),
@@ -564,10 +611,10 @@ do_create_relationship_attribute(Name, RecName, _Opts) ->
 			reciprocal           => NrefFwd,
 			attribute_value_pairs => [#{attribute => NameAttrNref, value => RecName}]
 		},
-		ets:insert(?TAB, {NrefFwd, RecordFwd}),
-		ets:insert(?TAB, {NrefRec, RecordRec}),
-		ets:insert(?IDX, {KeyFwd, NrefFwd}),
-		ets:insert(?IDX, {KeyRec, NrefRec}),
+		dets:insert(?TAB, {NrefFwd, RecordFwd}),
+		dets:insert(?TAB, {NrefRec, RecordRec}),
+		dets:insert(?IDX, {KeyFwd, NrefFwd}),
+		dets:insert(?IDX, {KeyRec, NrefRec}),
 		nref_server:confirm_nrefs([NrefFwd, NrefRec]),
 		{ok, {NrefFwd, NrefRec}};
 	_ ->
@@ -580,7 +627,7 @@ do_create_relationship_attribute(Name, RecName, _Opts) ->
 %%---------------------------------------------------------------------
 do_create_relationship_type(Name) ->
 	Key = {relationship_type, Name},
-	case ets:lookup(?IDX, Key) of
+	case dets:lookup(?IDX, Key) of
 	[{Key, _Nref}] ->
 		{error, duplicate};
 	[] ->
@@ -593,9 +640,9 @@ do_create_relationship_type(Name) ->
 			members              => [],
 			attribute_value_pairs => [#{attribute => NameAttrNref, value => Name}]
 		},
-		ets:insert(?TAB,   {Nref, Record}),
-		ets:insert(?IDX,   {Key,  Nref}),
-		ets:insert(?TYPES, {Nref, []}),
+		dets:insert(?TAB,   {Nref, Record}),
+		dets:insert(?IDX,   {Key,  Nref}),
+		dets:insert(?TYPES, {Nref, []}),
 		nref_server:confirm_nref(Nref),
 		{ok, Nref}
 	end.
@@ -605,7 +652,7 @@ do_create_relationship_type(Name) ->
 %% do_add_to_relationship_type(TypeNref, AttrNref) -> ok | {error, Reason}
 %%---------------------------------------------------------------------
 do_add_to_relationship_type(TypeNref, AttrNref) ->
-	case ets:lookup(?TAB, TypeNref) of
+	case dets:lookup(?TAB, TypeNref) of
 	[] ->
 		{error, type_not_found};
 	[{TypeNref, Record}] ->
@@ -618,8 +665,8 @@ do_add_to_relationship_type(TypeNref, AttrNref) ->
 			false ->
 				Members1 = [AttrNref | Members0],
 				Updated  = Record#{members => Members1},
-				ets:insert(?TAB,   {TypeNref, Updated}),
-				ets:insert(?TYPES, {TypeNref, Members1}),
+				dets:insert(?TAB,   {TypeNref, Updated}),
+				dets:insert(?TYPES, {TypeNref, Members1}),
 				ok
 			end;
 		_ ->
@@ -632,7 +679,7 @@ do_add_to_relationship_type(TypeNref, AttrNref) ->
 %% do_get_attribute(Nref) -> {ok, Record} | {error, not_found}
 %%---------------------------------------------------------------------
 do_get_attribute(Nref) ->
-	case ets:lookup(?TAB, Nref) of
+	case dets:lookup(?TAB, Nref) of
 	[{Nref, Record}] when is_map(Record) ->
 		{ok, Record};
 	_ ->
@@ -645,7 +692,7 @@ do_get_attribute(Nref) ->
 %%---------------------------------------------------------------------
 do_find_attribute(Kind, Name) ->
 	Key = {Kind, Name},
-	case ets:lookup(?IDX, Key) of
+	case dets:lookup(?IDX, Key) of
 	[{Key, Nref}] ->
 		{ok, Nref};
 	[] ->
@@ -657,18 +704,25 @@ do_find_attribute(Kind, Name) ->
 %% do_list_attributes() -> [Record]
 %%---------------------------------------------------------------------
 do_list_attributes() ->
-	All = ets:tab2list(?TAB),
-	[Record || {_Key, Record} <- All, is_map(Record)].
+	Acc = dets:foldl(
+		fun({_Key, Record}, A) when is_map(Record) -> [Record | A];
+		   (_, A)                                  -> A
+		end, [], ?TAB),
+	Acc.
 
 
 %%---------------------------------------------------------------------
 %% do_list_attributes(Kind) -> [Record]
 %%---------------------------------------------------------------------
 do_list_attributes(Kind) ->
-	All = ets:tab2list(?TAB),
-	[Record || {_Key, Record} <- All,
-	           is_map(Record),
-	           maps:get(type, Record, undefined) =:= Kind].
+	dets:foldl(
+		fun({_Key, Record}, A) when is_map(Record) ->
+			case maps:get(type, Record, undefined) of
+			Kind -> [Record | A];
+			_    -> A
+			end;
+		   (_, A) -> A
+		end, [], ?TAB).
 
 
 %%---------------------------------------------------------------------
@@ -684,7 +738,7 @@ do_list_relationship_types() ->
 %% Returns the Nref of the <<"attr_name">> seed attribute.
 %%---------------------------------------------------------------------
 bootstrap_name_attr_nref() ->
-	[{{name, <<"attr_name">>}, Nref}] = ets:lookup(?IDX, {name, <<"attr_name">>}),
+	[{{name, <<"attr_name">>}, Nref}] = dets:lookup(?IDX, {name, <<"attr_name">>}),
 	Nref.
 
 
@@ -695,5 +749,5 @@ bootstrap_name_attr_nref() ->
 %%---------------------------------------------------------------------
 bootstrap_relationship_avp_nref() ->
 	[{{bootstrap, relationship_avp_nref}, Nref}] =
-		ets:lookup(?TAB, {bootstrap, relationship_avp_nref}),
+		dets:lookup(?TAB, {bootstrap, relationship_avp_nref}),
 	Nref.

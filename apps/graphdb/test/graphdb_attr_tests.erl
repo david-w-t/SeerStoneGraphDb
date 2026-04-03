@@ -77,7 +77,8 @@ graphdb_attr_test_() ->
       fun test_find_attribute_not_found/1,
       fun test_list_attributes_all/1,
       fun test_list_attributes_by_kind/1,
-      fun test_list_relationship_types/1
+      fun test_list_relationship_types/1,
+      fun test_persistence_across_restart/1
      ]}.
 
 
@@ -304,4 +305,30 @@ test_list_relationship_types(_TmpDir) ->
         ?assert(lists:all(
             fun(R) -> maps:get(type, R) =:= relationship_type end,
             Types))
+    end).
+
+%% Attributes survive a server stop and restart (DETS persistence).
+test_persistence_across_restart(_TmpDir) ->
+    ?_test(begin
+        %% Write some attributes.
+        {ok, Nref1} = graphdb_attr:create_name_attribute(<<"persist_name">>),
+        {ok, Nref2} = graphdb_attr:create_literal_attribute(<<"persist_lit">>, integer),
+        {ok, {Nref3, _Nref4}} =
+            graphdb_attr:create_relationship_attribute(
+                <<"persist_fwd">>, <<"persist_rec">>),
+        %% Stop the server (closes DETS files).
+        ok = gen_server:stop(graphdb_attr),
+        %% Restart the server against the same DETS files.
+        {ok, _Pid} = graphdb_attr:start_link(),
+        %% All previously written records must still be present.
+        ?assertMatch({ok, _}, graphdb_attr:get_attribute(Nref1)),
+        ?assertMatch({ok, _}, graphdb_attr:get_attribute(Nref2)),
+        ?assertMatch({ok, _}, graphdb_attr:get_attribute(Nref3)),
+        %% Index lookups must also work.
+        ?assertMatch({ok, Nref1}, graphdb_attr:find_attribute(name,         <<"persist_name">>)),
+        ?assertMatch({ok, Nref2}, graphdb_attr:find_attribute(literal,      <<"persist_lit">>)),
+        ?assertMatch({ok, Nref3}, graphdb_attr:find_attribute(relationship,  <<"persist_fwd">>)),
+        %% Bootstrap records still accessible.
+        ?assertMatch({ok, _}, graphdb_attr:find_attribute(name,    <<"attr_name">>)),
+        ?assertMatch({ok, _}, graphdb_attr:find_attribute(literal, <<"relationship_avp">>))
     end).
