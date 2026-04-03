@@ -74,7 +74,8 @@
 %% Exports External.
 %%--------------------------------------------------------------------- 
 -export([
-		start_link/0
+		start_link/0,
+		start_link/1
 		]).
 
 
@@ -95,6 +96,9 @@
 %%--------------------------------------------------------------------- 
 
 start_link() ->
+	supervisor:start_link(graphdb_sup, []).
+
+start_link(_StartArgs) ->
 	supervisor:start_link(graphdb_sup, []).
 
 
