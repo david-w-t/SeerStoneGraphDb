@@ -28,8 +28,7 @@ Extend the existing `apps/seerstone/priv/default.config` with four new keys unde
   {app_port,       8080},
   {log_path,       "log"},
   {data_path,      "data"},
-  {bootstrap_file, "apps/graphdb/priv/bootstrap.terms"},
-  {nref_start,     10000}         %% allocator will not issue any nref below this value
+  {bootstrap_file, "apps/graphdb/priv/bootstrap.terms"}
 ]},
  {mnesia, [
   {dir, "data"}                   %% Mnesia reads its own dir from its app env
@@ -41,7 +40,6 @@ Extend the existing `apps/seerstone/priv/default.config` with four new keys unde
 | `log_path` | Directory for log files |
 | `data_path` | Directory for Mnesia database files and nref DETS files |
 | `bootstrap_file` | Path to the bootstrap `.terms` file; read on first startup when schema is empty |
-| `nref_start` | Inclusive lower bound; the nref allocator's counter starts at this value and never issues nrefs below it. Default: `10000` |
 
 ### Path resolution
 
@@ -51,9 +49,12 @@ Both relative and absolute paths are accepted for `log_path`, `data_path`, and `
 
 Mnesia reads its storage directory from its own application env key `{mnesia, dir}`. This is set directly in `default.config` (alongside the `seerstone_graph_db` env) so no code needs to call `application:set_env/3` for it. The value must match `data_path`.
 
-### nref_start replaces the compile-time constant
+### nref_start does not belong in config
 
-The earlier design proposed a `?BOOTSTRAP_NREF_CEILING` macro. That is replaced by `nref_start` in config. The `nref_allocator` reads this value from application env at startup and initialises its counter to `max(persisted_counter, nref_start)`. Bootstrap nrefs (which are all below `nref_start`) are loaded by the bootstrap loader and written directly to Mnesia without going through the allocator's normal counter.
+`nref_start` is a one-time bootstrap value, not a runtime config value. After the first
+bootstrap run, the nref allocator's DETS counter is already `>= nref_start` and persisted;
+the value is never consulted again. It belongs in `bootstrap.terms` alongside the data it
+governs — see Section 7.
 
 ---
 
@@ -152,16 +153,25 @@ Conclusion: the secondary index on `target_nref` provides everything the flag wo
 
 ### `nref_allocator` changes
 
-1. At startup, read `nref_start` from application env:
-   ```erlang
-   {ok, NrefStart} = application:get_env(seerstone_graph_db, nref_start).
-   ```
-2. Initialise the DETS counter to `max(PersistedCounter, NrefStart)` — ensures the counter never falls below `nref_start` even on a fresh node.
-3. The `get_nref/0` path is unchanged; it simply increments from wherever the counter sits.
+No startup changes required. The allocator initialises its counter from whatever is
+persisted in DETS (defaulting to 1 on a fresh node). It does not read `nref_start` from
+config — that value is handled entirely by the bootstrap loader as a one-time operation.
 
-### `nref_server` changes
+### `nref_server` — new `set_floor/1` API
 
-No new public API is required. Bootstrap nrefs (e.g., nref = 1 for root) are written directly to Mnesia by `graphdb_bootstrap` without going through `nref_server`. Because `nref_allocator` starts its counter at `nref_start`, it will never reissue any bootstrap nref — no explicit reservation call is needed.
+One new public function is needed, called once by `graphdb_bootstrap` after all bootstrap
+nodes and relationships are written:
+
+```erlang
+%% Advance the nref counter to at least Floor.
+%% No-op if the counter is already >= Floor.
+%% Called once by graphdb_bootstrap at the end of a successful bootstrap run.
+nref_server:set_floor(Floor :: integer()) -> ok.
+```
+
+This atomically sets the DETS counter to `max(current_counter, Floor)`, ensuring the
+allocator will never issue any nref in the bootstrap range. On all subsequent startups
+the persisted counter is already above the floor, so this function is never called again.
 
 ---
 
@@ -179,6 +189,13 @@ No new public API is required. Bootstrap nrefs (e.g., nref = 1 for root) are wri
 ### Record schema
 
 ```erlang
+%% Floor directive — must appear exactly once; processed last by the loader:
+{nref_start, N}.
+%%
+%%   N :: integer()  — after bootstrap completes, calls nref_server:set_floor(N)
+%%                     so the allocator never issues any nref below N.
+%%                     All pre-assigned nrefs in the file must be < N.
+
 %% Node record:
 {node, Nref, Kind, ParentNref, {NameAttrNref, NameValue}, [{AttrNref, Value}]}.
 %%
@@ -208,6 +225,7 @@ The loader processes the file in section order:
 2. `class` nodes
 3. `instance` nodes
 4. `relationship` records
+5. `nref_start` directive — `nref_server:set_floor/1` called last, after all data is written
 
 ### File location
 
@@ -226,6 +244,9 @@ Configurable via `bootstrap_file` key in `default.config`. Default value:
 
 %% --- Bidirectional relationship ---
 {relationship, 10, 20, [], 21, 11, []}.
+
+%% --- nref floor: allocator will not issue any nref below this value ---
+{nref_start, 10000}.
 ```
 
 ---
@@ -261,7 +282,7 @@ All questions resolved. No blockers for implementation.
 |---|---|
 | Path format for `log_path`, `data_path`, `bootstrap_file` | Both relative and absolute accepted; relative resolved from OTP release root |
 | Who sets Mnesia `dir`? | Set directly in `default.config` under `{mnesia, [{dir, "data"}]}` — no code needed |
-| `nref_start` value | `10000` |
+| `nref_start` placement | Directive `{nref_start, 10000}` in `bootstrap.terms` — not in config; one-time value belongs with the bootstrap data |
 | Stale DETS files | Deleted (`graphdb_attr.dets`, `graphdb_attr_index.dets`, `graphdb_attr_types.dets`) |
 | Bootstrap file content | Deferred — user will supply when ready |
 
@@ -274,7 +295,8 @@ SeerStoneGraphDb/
 ├── apps/seerstone/priv/
 │   └── default.config               CHANGE — add log_path, bootstrap_file, nref_start keys
 ├── apps/nref/src/
-│   └── nref_allocator.erl           CHANGE — read nref_start from env; init counter to max(persisted, nref_start)
+│   ├── nref_allocator.erl           CHANGE — add set_floor/1 internal implementation
+│   └── nref_server.erl              CHANGE — expose set_floor/1 public API
 ├── apps/graphdb/src/
 │   ├── graphdb_mgr.erl              CHANGE — bootstrap detection in init/1; call graphdb_bootstrap:load()
 │   ├── graphdb_attr.erl             IMPLEMENT — attribute library over Mnesia
@@ -291,8 +313,8 @@ SeerStoneGraphDb/
 
 ## 11. Implementation Order
 
-1. `default.config` — add `log_path`, `bootstrap_file`, `nref_start = 10000`, `mnesia dir` keys
-2. `nref_allocator` — read `nref_start` from env; init counter floor
+1. `default.config` — add `log_path`, `bootstrap_file`, `mnesia dir` keys
+2. `nref_server` / `nref_allocator` — add `set_floor/1` API
 3. ~~Delete stale `.dets` files~~ — **done**
 4. `graphdb_bootstrap` — implement loader; includes Mnesia schema/table creation
 5. `graphdb_mgr` — bootstrap detection in `init/1`; read `bootstrap_file` from env; call loader
