@@ -245,7 +245,7 @@ Priority order — each step applies only to attributes not yet resolved by a hi
 
 ---
 
-## Modelling Guidelines
+## Modeling Guidelines
 
 ### The Key Rule
 > Define every item of interest as a concept node. Even attributes become nodes.
