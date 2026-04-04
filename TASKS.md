@@ -9,10 +9,10 @@ modernization work is complete. The architecture has been fully designed
 ## Architecture Summary (read ARCHITECTURE.md for full detail)
 
 - **Storage**: Mnesia for all six `graphdb_*` workers (two tables: `nodes`, `relationships`)
-- **nref layer**: Stays on DETS; `nref_allocator` gains a config-driven floor (`nref_start`)
+- **nref layer**: Stays on DETS; `nref_server` gains `set_floor/1` API called once by bootstrap loader
 - **Dictionary**: Stays on ETS
-- **Bootstrap**: `graphdb_bootstrap` module loads `bootstrap.terms` on first startup
-- **Config**: `default.config` is the single runtime config; gains `log_path`, `bootstrap_file`, `nref_start = 10000`, and `{mnesia, [{dir, "data"}]}`
+- **Bootstrap**: `graphdb_bootstrap` module loads `bootstrap.terms` on first startup; `{nref_start, 10000}` directive lives in the bootstrap file, not in config
+- **Config**: `default.config` is the single runtime config; gains `log_path`, `bootstrap_file`, and `{mnesia, [{dir, "data"}]}`
 - **Root node**: nref = 1; stored in `bootstrap.terms`; only node with `parent = undefined`
 - **Relationships**: Stored in a separate Mnesia table (not embedded in node records); indexed on `source_nref` and `target_nref`; logical bidirectional edge = two directed rows written atomically
 
@@ -24,31 +24,33 @@ modernization work is complete. The architecture has been fully designed
 
 File: `apps/seerstone/priv/default.config`
 
-Add the following keys. Both relative and absolute paths are accepted for path values;
-relative paths resolve from the OTP release root.
+Add the following keys. Both relative and absolute paths are accepted; relative paths
+resolve from the OTP release root. Note: `nref_start` is NOT here — it is a one-time
+bootstrap directive in `bootstrap.terms`.
 
 ```erlang
 [{seerstone_graph_db, [
   {app_port,       8080},
   {log_path,       "log"},
   {data_path,      "data"},
-  {bootstrap_file, "apps/graphdb/priv/bootstrap.terms"},
-  {nref_start,     10000}
+  {bootstrap_file, "apps/graphdb/priv/bootstrap.terms"}
 ]},
  {mnesia, [
   {dir, "data"}    %% must match data_path; Mnesia reads this from its own app env
 ]}].
 ```
 
-### 0b. Update `nref_allocator` — config-driven nref floor
+### 0b. Add `set_floor/1` to `nref_server` and `nref_allocator`
 
-File: `apps/nref/src/nref_allocator.erl`
+Files: `apps/nref/src/nref_server.erl`, `apps/nref/src/nref_allocator.erl`
 
-- At startup, read `nref_start` from `application:get_env(seerstone_graph_db, nref_start)`
-- Initialise the DETS counter to `max(PersistedCounter, NrefStart)`
-- The `get_nref/0` path is unchanged; it increments from the current counter value
-- Bootstrap nrefs (all below `nref_start`) are written directly to Mnesia by
-  `graphdb_bootstrap` — they never pass through `get_nref/0`
+- Add `nref_server:set_floor(Floor :: integer()) -> ok`
+- Implementation: atomically set the DETS counter to `max(current_counter, Floor)`
+- Called exactly once by `graphdb_bootstrap` at the end of a successful bootstrap run,
+  after all nodes and relationships have been written to Mnesia
+- On all subsequent startups the persisted counter is already `>= Floor`; this function
+  is never called again
+- `get_nref/0` is unchanged; `nref_allocator` startup is unchanged (no config read needed)
 
 ### 0c. ~~Delete stale DETS files~~ — DONE
 
@@ -75,11 +77,14 @@ This module is called by `graphdb_mgr:init/1` when the Mnesia `nodes` table is e
   - `relationships` table: `{disc_copies, [node()]}`, indexes on `source_nref` and `target_nref`
 - Read `bootstrap_file` path from `application:get_env(seerstone_graph_db, bootstrap_file)`
 - Call `file:consult/1` on the bootstrap file; validate all terms
+- Validate that exactly one `{nref_start, N}` directive is present and that all node
+  nrefs are `< N`; fail fast otherwise
 - Partition terms into nodes and relationships; enforce processing order:
   1. `attribute` nodes
   2. `class` nodes
   3. `instance` nodes
   4. `relationship` records
+  5. `{nref_start, N}` directive — call `nref_server:set_floor(N)` last, after all data written
 - Write each node to Mnesia in a transaction
 - Expand each `{relationship, N1, R1, AVPs1, R2, N2, AVPs2}` term into two directed
   `relationship` records; write both atomically in the same Mnesia transaction
@@ -233,7 +238,7 @@ Correct for the present configuration; revisit if phased startup is desired.
 | # | Task | Depends on |
 |---|---|---|
 | 0a | Update `default.config` | — |
-| 0b | Update `nref_allocator` (nref floor) | 0a |
+| 0b | Add `nref_server:set_floor/1` API | — |
 | ~~0c~~ | ~~Delete stale DETS files~~ — **done** | — |
 | 1 | `graphdb_bootstrap` + Mnesia schema | 0a |
 | 2 | `graphdb_mgr` startup wiring | 1 |
