@@ -79,6 +79,7 @@
 -export([
 		start_link/0,			%% Starts and links the gen_server.
 		get_nref/0, 			%% returns a single nref and adds it to the allocation tracker.
+		set_floor/1,			%% advances counter to max(current, Floor).
 		confirm_nref/1,			%% removes nref from the confirm list.
 		confirm_nrefs/1,		%% removes list of nrefs from the confirm list.
 		reuse_nref/1,			%% adds nref to the reuse list.
@@ -118,6 +119,18 @@ start_link() ->
 %%-----------------------------------------------------------------------------
 get_nref() ->
 	gen_server:call(?MODULE, get_nref).
+
+
+%%-----------------------------------------------------------------------------
+%% set_floor(Floor) -> ok
+%%
+%% Advances the nref counter to max(current, Floor).
+%% Delegates to nref_allocator:set_floor/1 first, then advances the
+%% server's own counter and forces a new block request on next get_nref.
+%% Called once by graphdb_bootstrap before writing any nodes.
+%%-----------------------------------------------------------------------------
+set_floor(Floor) when is_integer(Floor), Floor > 0 ->
+	gen_server:call(?MODULE, {set_floor, Floor}).
 
 
 %%-----------------------------------------------------------------------------
@@ -174,6 +187,9 @@ init([]) ->
 %%-----------------------------------------------------------------------------
 handle_call(get_nref, _From, State) ->
 	Reply = do_get_nref(),
+	{reply, Reply, State};
+handle_call({set_floor, Floor}, _From, State) ->
+	Reply = do_set_floor(Floor),
 	{reply, Reply, State};
 handle_call({confirm_nref, Nref}, _From, State) ->
 	Reply = do_confirm_nref(Nref),
@@ -262,6 +278,24 @@ close() -> dets:close(?MODULE).
 %%  confirm is the list of nrefs that have been allocated but not yet confirmed as used.
 initialize(_File) ->
 	dets:insert(?MODULE, [{free,1},{top, 1},{reuse,[]}, {confirm,[]}]),
+	ok.
+
+
+%%-----------------------------------------------------------------------------
+%% do_set_floor(Floor) -> ok
+%%
+%% Advances the allocator counter, then the server's own counter.
+%% Sets top = free so that the next get_nref/0 call requests a fresh
+%% block from the allocator (which now starts at >= Floor).
+%% No-op if both counters are already >= Floor.
+%%-----------------------------------------------------------------------------
+do_set_floor(Floor) when is_integer(Floor), Floor > 0 ->
+	ok = nref_allocator:set_floor(Floor),
+	[{free, Current}] = dets:lookup(?MODULE, free),
+	case Floor > Current of
+		true  -> ok = dets:insert(?MODULE, [{free, Floor}, {top, Floor}]);
+		false -> ok
+	end,
 	ok.
 
 

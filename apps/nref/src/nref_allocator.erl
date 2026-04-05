@@ -68,6 +68,7 @@
 -export([
 		start_link/0,		%% Starts and links the gen_server.
 		allocate_nrefs/0,	%% allocates a block of nrefs.
+		set_floor/1,		%% advances counter to max(current, Floor).
 		reuse_nref/1,		%% adds nref to the reuse list.
 		reuse_nrefs/1,		%% adds list of nrefs to the reuse list.
 		used_nref_block/1,	%% logs the allocation of an nref and removes it from the allocation tracker.
@@ -108,6 +109,16 @@ start_link() ->
 %%-----------------------------------------------------------------------------
 allocate_nrefs() ->
 	gen_server:call(?MODULE, allocate_nrefs).
+
+
+%%-----------------------------------------------------------------------------
+%% set_floor(Floor) -> ok
+%%
+%% Advances the allocator counter to max(current, Floor).
+%% Called once by graphdb_bootstrap before writing any nodes.
+%%-----------------------------------------------------------------------------
+set_floor(Floor) when is_integer(Floor), Floor > 0 ->
+	gen_server:call(?MODULE, {set_floor, Floor}).
 
 
 %%-----------------------------------------------------------------------------
@@ -171,6 +182,9 @@ init([]) ->
 %%-----------------------------------------------------------------------------
 handle_call(allocate_nrefs, _From, State) ->
 	Reply = do_allocate_nrefs(),
+	{reply, Reply, State};
+handle_call({set_floor, Floor}, _From, State) ->
+	Reply = do_set_floor(Floor),
 	{reply, Reply, State};
 handle_call({reuse_nref, Nref}, _From, State) ->
 	Reply = do_reuse_nref(Nref),
@@ -265,6 +279,21 @@ open() ->
 %% close() -> ok | {error, Reason}
 %%-----------------------------------------------------------------------------
 close() -> dets:close(?MODULE).
+
+
+%%-----------------------------------------------------------------------------
+%% do_set_floor(Floor) -> ok
+%%
+%% Atomically advances the free counter to max(current, Floor).
+%% No-op if the counter is already >= Floor.
+%%-----------------------------------------------------------------------------
+do_set_floor(Floor) when is_integer(Floor), Floor > 0 ->
+	[{free, Current}] = dets:lookup(?MODULE, free),
+	case Floor > Current of
+		true  -> ok = dets:insert(?MODULE, {free, Floor});
+		false -> ok
+	end,
+	ok.
 
 
 %%-----------------------------------------------------------------------------
