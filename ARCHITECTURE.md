@@ -450,20 +450,25 @@ Configurable via `bootstrap_file` key in `default.config`. Default value:
 
 ---
 
-## 9. New Module: `graphdb_bootstrap`
+## 9. New Module: `graphdb_bootstrap` — **DONE**
 
 File: `apps/graphdb/src/graphdb_bootstrap.erl`
 
-### Responsibilities
+### Responsibilities (all implemented)
 
-1. Called from `graphdb_mgr:init/1` when the Mnesia `nodes` table is empty
+1. Called from `graphdb_mgr:init/1` — `load/0` is idempotent (creates tables if needed, skips if already populated)
 2. Reads `bootstrap_file` path from application env
 3. Calls `file:consult/1`, validates all terms
 4. Validates that exactly one `{nref_start, N}` directive is present and all node nrefs are `< N`
 5. Calls `nref_server:set_floor(N)` **first** — subsequent `get_nref/0` calls return `>= N`
 6. Writes nodes to Mnesia in section order: `category` → `attribute` → `class` → `instance`
 7. Expands each `{relationship,...}` term into two directed `relationship` records; each gets an ID via `get_nref()`; writes both rows atomically
-9. Logs progress and any validation errors
+8. Logs progress and any validation errors
+
+### Implementation notes
+
+- Mnesia table names are plural (`nodes`, `relationships`); record names are singular (`node`, `relationship`). Uses `{record_name, ...}` table option; all operations use `mnesia:write/3` (explicit 3-arg form).
+- nref IDs for relationships are allocated outside Mnesia transactions to avoid side-effects on retry.
 
 ### Category-only enforcement
 
@@ -509,7 +514,7 @@ SeerStoneGraphDb/
 │   ├── graphdb_instance.erl         IMPLEMENT — compositional hierarchy + inheritance over Mnesia
 │   ├── graphdb_rules.erl            IMPLEMENT — rule storage and enforcement
 │   ├── graphdb_language.erl         IMPLEMENT — query parser and executor
-│   └── graphdb_bootstrap.erl        CREATE — bootstrap file loader (new module)
+│   └── graphdb_bootstrap.erl        DONE — bootstrap file loader + Mnesia schema/table creation
 └── apps/graphdb/priv/
     └── bootstrap.terms              DONE — 30 nodes (nrefs 1–30), 29 relationship pairs (27 compositional + 2 membership)
 ```
@@ -522,8 +527,8 @@ SeerStoneGraphDb/
 2. ~~`nref_server` / `nref_allocator` — add `set_floor/1` API~~ — **done**
 3. ~~Delete stale `.dets` files~~ — **done**
 3a. ~~`apps/graphdb/priv/bootstrap.terms`~~ — **done** (nrefs 1–30, BFS)
-4. `graphdb_bootstrap` — implement loader; includes Mnesia schema/table creation ← **next**
-5. `graphdb_mgr` — bootstrap detection in `init/1`; read `bootstrap_file` from env; call loader
+4. ~~`graphdb_bootstrap` — implement loader; includes Mnesia schema/table creation~~ — **done**
+5. `graphdb_mgr` — bootstrap detection in `init/1`; read `bootstrap_file` from env; call loader ← **next**
 7. `graphdb_attr` — implement attribute library (Mnesia-backed)
 8. `graphdb_class` — implement taxonomic hierarchy (Mnesia-backed)
 9. `graphdb_instance` — implement compositional hierarchy + inheritance (Mnesia-backed)
@@ -541,6 +546,6 @@ To resume this session, start a new OpenCode session in this repository and past
 We are resuming implementation of SeerStoneGraphDb.
 Read ARCHITECTURE.md for full design decisions and TASKS.md for the task list.
 All design questions are resolved. bootstrap.terms is complete (nrefs 1-30, BFS).
-Tasks 0a (default.config), 0b (set_floor/1), and 0c (stale DETS) are done.
-Next task: Task 1 — graphdb_bootstrap (step 4 in ARCHITECTURE.md Section 12).
+Tasks 0a-0c and Task 1 (graphdb_bootstrap) are done.
+Next task: Task 2 — graphdb_mgr startup wiring (step 5 in ARCHITECTURE.md Section 12).
 ```

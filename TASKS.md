@@ -48,42 +48,21 @@ the repository root. `nref_allocator.dets` and `nref_server.dets` are retained (
 
 ---
 
-## Task 1 — `graphdb_bootstrap` — Bootstrap Loader (New Module)
+## ~~Task 1 — `graphdb_bootstrap` — Bootstrap Loader (New Module)~~ — DONE
 
 File: `apps/graphdb/src/graphdb_bootstrap.erl`
 
-This module is called by `graphdb_mgr:init/1` when the Mnesia `nodes` table is empty.
+Implemented: Mnesia schema/table creation, bootstrap.terms file loader, node and
+relationship writers. `load/0` is idempotent — creates schema/tables if needed,
+skips data load if the `nodes` table is already populated.
 
-**Sub-tasks:**
-
-- Define Mnesia record types:
-  ```erlang
-  -record(node, {nref, kind, parent, attribute_value_pairs}).
-  %% kind :: category | attribute | class | instance
-  -record(relationship, {id, source_nref, characterization, target_nref, reciprocal, avps}).
-  ```
-- Implement Mnesia schema and table creation (called once at first startup):
-  - `nodes` table: `{disc_copies, [node()]}`, index on `parent`
-  - `relationships` table: `{disc_copies, [node()]}`, indexes on `source_nref` and `target_nref`
-- Read `bootstrap_file` path from `application:get_env(seerstone_graph_db, bootstrap_file)`
-- Call `file:consult/1` on the bootstrap file; validate all terms
-- Validate that exactly one `{nref_start, N}` directive is present and that all node
-  nrefs are `< N`; fail fast otherwise
-- Process in this order:
-  1. `{nref_start, N}` directive — call `nref_server:set_floor(N)` **first** so subsequent
-     `get_nref/0` calls for relationship IDs return `>= N`, never colliding with pre-assigned nrefs
-  2. `category` nodes
-  3. `attribute` nodes
-  4. `class` nodes
-  5. `instance` nodes
-  6. `relationship` records — each gets an ID via `get_nref()`; two directed rows per term, atomic
-- Write each node to Mnesia in a transaction
-- Expand each `{relationship, N1, R1, AVPs1, R2, N2, AVPs2}` term into two directed
-  `relationship` records; write both atomically in the same Mnesia transaction
-- Public API:
-  ```erlang
-  graphdb_bootstrap:load() -> ok | {error, Reason :: term()}.
-  ```
+- Mnesia tables: `nodes` (disc_copies, index on `parent`) and `relationships`
+  (disc_copies, indexes on `source_nref` and `target_nref`)
+- Table names are plural; record names are singular — uses `{record_name, node}` /
+  `{record_name, relationship}` option; all Mnesia operations use explicit 3-arg form
+- Processing order: `nref_start` → category → attribute → class → instance → relationships
+- Each relationship term expands to two directed rows; IDs allocated via
+  `nref_server:get_nref/0` outside the Mnesia transaction to avoid side-effects on retry
 
 **Bootstrap file: DONE**
 `apps/graphdb/priv/bootstrap.terms` is fully written: 30 nodes (nrefs 1–30, BFS) and
@@ -241,8 +220,8 @@ Correct for the present configuration; revisit if phased startup is desired.
 | ~~0a~~ | ~~Update `default.config`~~ — **done** | — |
 | ~~0b~~ | ~~Add `nref_server:set_floor/1` API~~ — **done** | — |
 | ~~0c~~ | ~~Delete stale DETS files~~ — **done** | — |
-| 1 | `graphdb_bootstrap` + Mnesia schema ← **next** | 0a, 0b |
-| 2 | `graphdb_mgr` startup wiring | 1 |
+| ~~1~~ | ~~`graphdb_bootstrap` + Mnesia schema~~ — **done** | 0a, 0b |
+| 2 | `graphdb_mgr` startup wiring ← **next** | 1 |
 | 3 | `graphdb_attr` | 1, 2 |
 | 4 | `graphdb_class` | 3 |
 | 5 | `graphdb_instance` | 3, 4 |

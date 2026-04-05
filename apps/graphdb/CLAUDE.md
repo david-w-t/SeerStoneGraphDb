@@ -10,7 +10,7 @@
 |----------------------------|-----------------------------------------------------------|
 | `graphdb.erl`              | OTP `application` behaviour callback module               |
 | `graphdb_sup.erl`          | OTP `supervisor` behaviour callback module                |
-| `graphdb_bootstrap.erl`    | Bootstrap file loader + Mnesia schema creator (to create) |
+| `graphdb_bootstrap.erl`    | Bootstrap file loader + Mnesia schema creator (implemented) |
 | `graphdb_mgr.erl`          | Primary coordinator gen_server (stub)                     |
 | `graphdb_rules.erl`        | Graph rules gen_server (stub)                             |
 | `graphdb_attr.erl`         | Attribute library gen_server (stub)                       |
@@ -257,7 +257,7 @@ The following callbacks in `graphdb.erl` return `ok` (no-op stubs correct for cu
 
 All six worker modules (`graphdb_mgr`, `graphdb_rules`, `graphdb_attr`, `graphdb_class`,
 `graphdb_instance`, `graphdb_language`) are empty gen_server stubs.
-`graphdb_bootstrap.erl` does not yet exist.
+`graphdb_bootstrap.erl` is fully implemented (Task 1 — done).
 
 ## Key Design Notes
 
