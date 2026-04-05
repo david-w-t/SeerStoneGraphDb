@@ -9,7 +9,7 @@
 | Area | State |
 |---|---|
 | Build | Compiles cleanly — zero warnings (OTP 27 / rebar3 3.24) |
-| `nref_server` / `nref_allocator` | Fully implemented; DETS-backed |
+| `nref_server` / `nref_allocator` | Fully implemented; DETS-backed; `set_floor/1` added |
 | `dictionary_imp` | Implemented; not yet wired to `dictionary_server` or `term_server` |
 | `dictionary_server`, `term_server` | Stubs |
 | All 6 `graphdb_*` workers | Empty gen_server stubs — no graph logic |
@@ -371,8 +371,8 @@ holding the counter, mirroring the environment allocator's design.
 
 ### `nref_server` — new `set_floor/1` API
 
-One new public function is needed on the environment allocator, called once by
-`graphdb_bootstrap`:
+One new public function has been added to the environment allocator (Task 0b — **done**),
+called once by `graphdb_bootstrap`:
 
 ```erlang
 %% Advance the nref counter to at least Floor.
@@ -446,7 +446,7 @@ Configurable via `bootstrap_file` key in `default.config`. Default value:
 
 ### File
 
-`apps/graphdb/priv/bootstrap.terms` — fully written; contains all 30 nodes (nrefs 1–30) and 29 compositional relationship pairs. See that file for the authoritative content.
+`apps/graphdb/priv/bootstrap.terms` — fully written; contains all 30 nodes (nrefs 1–30) and 29 relationship pairs (27 compositional + 2 membership). See that file for the authoritative content.
 
 ---
 
@@ -489,7 +489,7 @@ All questions resolved. No blockers for implementation.
 | Who sets Mnesia `dir`? | Set directly in `default.config` under `{mnesia, [{dir, "data"}]}` — no code needed |
 | `nref_start` placement | Directive `{nref_start, 10000}` in `bootstrap.terms` — not in config; one-time value belongs with the bootstrap data |
 | Stale DETS files | Deleted (`graphdb_attr.dets`, `graphdb_attr_index.dets`, `graphdb_attr_types.dets`) |
-| Bootstrap file content | **Done** — `apps/graphdb/priv/bootstrap.terms` written; nrefs 1–28, BFS |
+| Bootstrap file content | **Done** — `apps/graphdb/priv/bootstrap.terms` written; nrefs 1–30, BFS |
 
 ---
 
@@ -498,10 +498,10 @@ All questions resolved. No blockers for implementation.
 ```
 SeerStoneGraphDb/
 ├── apps/seerstone/priv/
-│   └── default.config               CHANGE — add log_path, bootstrap_file, nref_start keys
+│   └── default.config               DONE — added log_path, bootstrap_file, mnesia dir; removed index_path
 ├── apps/nref/src/
-│   ├── nref_allocator.erl           CHANGE — add set_floor/1 internal implementation
-│   └── nref_server.erl              CHANGE — expose set_floor/1 public API
+│   ├── nref_allocator.erl           DONE — set_floor/1 added
+│   └── nref_server.erl              DONE — set_floor/1 added
 ├── apps/graphdb/src/
 │   ├── graphdb_mgr.erl              CHANGE — bootstrap detection in init/1; call graphdb_bootstrap:load()
 │   ├── graphdb_attr.erl             IMPLEMENT — attribute library over Mnesia
@@ -511,18 +511,18 @@ SeerStoneGraphDb/
 │   ├── graphdb_language.erl         IMPLEMENT — query parser and executor
 │   └── graphdb_bootstrap.erl        CREATE — bootstrap file loader (new module)
 └── apps/graphdb/priv/
-    └── bootstrap.terms              DONE — 30 nodes (nrefs 1–30), 29 relationship pairs
+    └── bootstrap.terms              DONE — 30 nodes (nrefs 1–30), 29 relationship pairs (27 compositional + 2 membership)
 ```
 
 ---
 
 ## 12. Implementation Order
 
-1. `default.config` — add `log_path`, `bootstrap_file`, `mnesia dir` keys
-2. `nref_server` / `nref_allocator` — add `set_floor/1` API
+1. ~~`default.config` — add `log_path`, `bootstrap_file`, `mnesia dir` keys~~ — **done**
+2. ~~`nref_server` / `nref_allocator` — add `set_floor/1` API~~ — **done**
 3. ~~Delete stale `.dets` files~~ — **done**
-3a. ~~`apps/graphdb/priv/bootstrap.terms`~~ — **done** (nrefs 1–28, BFS)
-4. `graphdb_bootstrap` — implement loader; includes Mnesia schema/table creation
+3a. ~~`apps/graphdb/priv/bootstrap.terms`~~ — **done** (nrefs 1–30, BFS)
+4. `graphdb_bootstrap` — implement loader; includes Mnesia schema/table creation ← **next**
 5. `graphdb_mgr` — bootstrap detection in `init/1`; read `bootstrap_file` from env; call loader
 7. `graphdb_attr` — implement attribute library (Mnesia-backed)
 8. `graphdb_class` — implement taxonomic hierarchy (Mnesia-backed)
@@ -540,6 +540,7 @@ To resume this session, start a new OpenCode session in this repository and past
 ```
 We are resuming implementation of SeerStoneGraphDb.
 Read ARCHITECTURE.md for full design decisions and TASKS.md for the task list.
-All design questions are resolved. bootstrap.terms is complete (nrefs 1-28, BFS).
-Begin implementation in the order listed in ARCHITECTURE.md Section 12, starting at step 1.
+All design questions are resolved. bootstrap.terms is complete (nrefs 1-30, BFS).
+Tasks 0a (default.config), 0b (set_floor/1), and 0c (stale DETS) are done.
+Next task: Task 1 — graphdb_bootstrap (step 4 in ARCHITECTURE.md Section 12).
 ```

@@ -25,39 +25,23 @@ modernization work is complete. The architecture has been fully designed
 
 ## Task 0 — Pre-implementation: Config and Infrastructure
 
-### 0a. Update `default.config`
+### ~~0a. Update `default.config`~~ — DONE
 
 File: `apps/seerstone/priv/default.config`
 
-Add the following keys. Both relative and absolute paths are accepted; relative paths
-resolve from the OTP release root. Note: `nref_start` is NOT here — it is a one-time
-bootstrap directive in `bootstrap.terms`.
+Added `log_path`, `data_path`, `bootstrap_file` keys; added `{mnesia, [{dir, "data"}]}`
+stanza; removed unused `index_path`. Also updated `config/sys.config` to match.
 
-```erlang
-[{seerstone_graph_db, [
-  {app_port,       8080},
-  {log_path,       "log"},
-  {data_path,      "data"},
-  {bootstrap_file, "apps/graphdb/priv/bootstrap.terms"}
-]},
- {mnesia, [
-  {dir, "data"}    %% must match data_path; Mnesia reads this from its own app env
-]}].
-```
-
-### 0b. Add `set_floor/1` to `nref_server` and `nref_allocator`
+### ~~0b. Add `set_floor/1` to `nref_server` and `nref_allocator`~~ — DONE
 
 Files: `apps/nref/src/nref_server.erl`, `apps/nref/src/nref_allocator.erl`
 
-- Add `nref_server:set_floor(Floor :: integer()) -> ok`
-- Implementation: atomically set the DETS counter to `max(current_counter, Floor)`
-- Called exactly once by `graphdb_bootstrap` at the end of a successful bootstrap run,
-  after all nodes and relationships have been written to Mnesia
-- On all subsequent startups the persisted counter is already `>= Floor`; this function
-  is never called again
-- `get_nref/0` is unchanged; `nref_allocator` startup is unchanged (no config read needed)
+Added `nref_server:set_floor(Floor)` and `nref_allocator:set_floor(Floor)`. Implementation
+atomically sets the DETS counter to `max(current_counter, Floor)`. `nref_server` delegates
+to `nref_allocator:set_floor/1` first, then advances its own `free` counter and sets
+`top = free` to force a fresh block request.
 
-### 0c. ~~Delete stale DETS files~~ — DONE
+### ~~0c. Delete stale DETS files~~ — DONE
 
 `graphdb_attr.dets`, `graphdb_attr_index.dets`, `graphdb_attr_types.dets` deleted from
 the repository root. `nref_allocator.dets` and `nref_server.dets` are retained (live).
@@ -102,9 +86,9 @@ This module is called by `graphdb_mgr:init/1` when the Mnesia `nodes` table is e
   ```
 
 **Bootstrap file: DONE**
-`apps/graphdb/priv/bootstrap.terms` is fully written: 28 nodes (nrefs 1–28, BFS) and
-27 compositional relationship pairs. See ARCHITECTURE.md Section 4 for the nref table
-and arc label quick-reference.
+`apps/graphdb/priv/bootstrap.terms` is fully written: 30 nodes (nrefs 1–30, BFS) and
+29 relationship pairs (27 compositional + 2 membership arc labels). See ARCHITECTURE.md
+Section 4 for the nref table and arc label quick-reference.
 
 ---
 
@@ -254,10 +238,10 @@ Correct for the present configuration; revisit if phased startup is desired.
 
 | # | Task | Depends on |
 |---|---|---|
-| 0a | Update `default.config` | — |
-| 0b | Add `nref_server:set_floor/1` API | — |
+| ~~0a~~ | ~~Update `default.config`~~ — **done** | — |
+| ~~0b~~ | ~~Add `nref_server:set_floor/1` API~~ — **done** | — |
 | ~~0c~~ | ~~Delete stale DETS files~~ — **done** | — |
-| 1 | `graphdb_bootstrap` + Mnesia schema | 0a |
+| 1 | `graphdb_bootstrap` + Mnesia schema ← **next** | 0a, 0b |
 | 2 | `graphdb_mgr` startup wiring | 1 |
 | 3 | `graphdb_attr` | 1, 2 |
 | 4 | `graphdb_class` | 3 |
