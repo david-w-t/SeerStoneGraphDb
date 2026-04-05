@@ -71,19 +71,29 @@ Section 4 for the nref table and arc label quick-reference.
 
 ---
 
-## Task 2 — `graphdb_mgr` — Startup Wiring
+## ~~Task 2 — `graphdb_mgr` — Startup Wiring~~ — DONE
 
 File: `apps/graphdb/src/graphdb_mgr.erl`
 
-**Sub-tasks:**
-- In `init/1`: check if Mnesia `nodes` table exists and is empty
-- If empty (first startup): call `graphdb_bootstrap:load/0`; halt with error if it fails
-- Define the public API (the single entry point for callers outside `graphdb`):
-  - Delegate to `graphdb_attr`, `graphdb_class`, `graphdb_instance` etc.
-  - Reject any runtime request to create, modify, or delete a `category` node with
-    `{error, category_nodes_are_immutable}`
-- Implement transaction-like sequencing: allocate Nref via `nref_server:get_nref/0`
-  → write record → confirm Nref
+Implemented: bootstrap detection in `init/1`, public API skeleton, category
+immutability guard, and read operations.
+
+- **`init/1`**: calls `graphdb_bootstrap:load/0` (idempotent); returns
+  `{stop, {bootstrap_failed, Reason}}` on failure
+- **Read API** (fully functional):
+  - `get_node/1` — Mnesia read by primary key
+  - `get_relationships/1` — outgoing relationships (default)
+  - `get_relationships/2` — directional query (`outgoing | incoming | both`)
+- **Write API** (category guard + delegation stubs):
+  - `create_attribute/3`, `create_class/2`, `create_instance/3`,
+    `add_relationship/4` — return `{error, not_implemented}` pending worker
+    implementation (Tasks 3–5)
+  - `delete_node/1`, `update_node_avps/2` — enforce category immutability
+    guard; return `{error, not_implemented}` for non-category nodes
+- **Category guard**: `check_category_guard/1` reads the node and rejects
+  `kind = category` with `{error, category_nodes_are_immutable}`
+- **Direction validation**: `validate_direction/1` rejects invalid directions
+  client-side before the gen_server call
 
 ---
 
@@ -221,8 +231,8 @@ Correct for the present configuration; revisit if phased startup is desired.
 | ~~0b~~ | ~~Add `nref_server:set_floor/1` API~~ — **done** | — |
 | ~~0c~~ | ~~Delete stale DETS files~~ — **done** | — |
 | ~~1~~ | ~~`graphdb_bootstrap` + Mnesia schema~~ — **done** | 0a, 0b |
-| 2 | `graphdb_mgr` startup wiring ← **next** | 1 |
-| 3 | `graphdb_attr` | 1, 2 |
+| ~~2~~ | ~~`graphdb_mgr` startup wiring~~ — **done** | 1 |
+| 3 | `graphdb_attr` ← **next** | 1, 2 |
 | 4 | `graphdb_class` | 3 |
 | 5 | `graphdb_instance` | 3, 4 |
 | 6 | `graphdb_rules` | 5 |
