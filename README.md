@@ -9,11 +9,23 @@ when completing NYI stubs.
 ### Current Status
 
 The project compiles clean with zero warnings (OTP 27 / rebar3 3.24). The
-`nref` and `dictionary` subsystems are fully implemented. The six `graphdb`
-worker modules (`graphdb_attr`, `graphdb_class`, `graphdb_instance`,
-`graphdb_rules`, `graphdb_language`, `graphdb_mgr`) exist as working
-gen_server stubs but contain no graph logic — this is the primary remaining
-implementation work. See `TASKS.md` for a prioritised task list.
+architecture is fully designed (see `ARCHITECTURE.md`). Implementation is
+underway:
+
+| Component | Status |
+|---|---|
+| `nref` subsystem | Fully implemented (DETS-backed ID allocator with `set_floor/1`) |
+| `dictionary` subsystem | `dictionary_imp` implemented; server stubs not yet wired |
+| `graphdb_bootstrap` | Fully implemented — Mnesia schema/table creation, bootstrap scaffold loader (30 nodes, 29 relationship pairs) |
+| `graphdb_mgr` | Implemented — bootstrap init, public read API (`get_node`, `get_relationships`), category immutability guard; write operations delegate to workers (pending) |
+| `graphdb_attr` | Implemented |
+| `graphdb_class` | Gen_server stub — next to implement |
+| `graphdb_instance` | Gen_server stub |
+| `graphdb_rules` | Gen_server stub |
+| `graphdb_language` | Gen_server stub |
+
+**79 tests** (44 EUnit + 35 Common Test) — all passing. See `TASKS.md` for a
+prioritised task list.
 
 ---
 
@@ -159,11 +171,35 @@ Priority order — each step applies only to attributes not yet resolved by a hi
 
 ## Storage
 
-| Technology   | Used by                         | Purpose                                |
-|--------------|---------------------------------|----------------------------------------|
-| DETS         | `nref_allocator`, `nref_server` | Persistent disk-based term storage     |
-| ETS          | `dictionary_imp`                | In-memory term storage                 |
-| ETS tab2file | `dictionary_imp`                | Persistent serialization of ETS tables |
+| Technology   | Used by                         | Purpose                                                           |
+|--------------|---------------------------------|-------------------------------------------------------------------|
+| Mnesia       | `graphdb_*` workers             | Graph node and relationship storage; `disc_copies` for RAM-speed reads with persistence |
+| DETS         | `nref_allocator`, `nref_server` | Persistent disk-based term storage                                |
+| ETS          | `dictionary_imp`                | In-memory term storage                                            |
+| ETS tab2file | `dictionary_imp`                | Persistent serialization of ETS tables                            |
+
+---
+
+## Testing
+
+```sh
+# Run all EUnit tests (pure function tests)
+./rebar3 eunit --app=graphdb
+
+# Run all Common Test suites (integration tests with isolated Mnesia)
+./rebar3 ct --suite=apps/graphdb/test/graphdb_bootstrap_SUITE
+./rebar3 ct --suite=apps/graphdb/test/graphdb_mgr_SUITE
+```
+
+| Suite | Type | Tests | Coverage |
+|---|---|---|---|
+| `graphdb_bootstrap_tests` | EUnit | 35 | Term parsing, validation, record conversion |
+| `graphdb_mgr_tests` | EUnit | 9 | Direction validation, client-side arg checks |
+| `graphdb_bootstrap_SUITE` | CT | 16 | Full bootstrap load, Mnesia tables, idempotency, error handling |
+| `graphdb_mgr_SUITE` | CT | 19 | Bootstrap init, read ops, category guard, write stubs |
+
+Each CT test case runs in an isolated Mnesia database with a fresh nref
+allocator in a private temp directory.
 
 ---
 
@@ -184,15 +220,19 @@ configures both the OTP logger and the application settings:
     ]}
   ]},
   {seerstone_graph_db, [
-    {app_port,   8080},
-    {data_path,  "data"},
-    {index_path, "index"}
+    {app_port,       8080},
+    {log_path,       "log"},
+    {data_path,      "data"},
+    {bootstrap_file, "apps/graphdb/priv/bootstrap.terms"}
+  ]},
+  {mnesia, [
+    {dir, "data"}
   ]}
 ].
 ```
 
-`apps/seerstone/priv/default.config` carries only the `seerstone_graph_db`
-stanza and is used as a fallback when no `sys.config` is present.
+`apps/seerstone/priv/default.config` carries the `seerstone_graph_db` and
+`mnesia` stanzas and is used as a fallback when no `sys.config` is present.
 
 **Note:** the `log/` directory must exist before starting the system; it is
 not created automatically. Create it once with `mkdir log`.
@@ -238,4 +278,4 @@ Key conventions at a glance:
 - Module names follow the pattern: `name.erl`, `name_sup.erl`, `name_server.erl`, `name_imp.erl`
 - Graph nodes are identified by **Nrefs** — plain positive integers allocated by `nref_server:get_nref/0`
 - See `knowledge-graph-database-guide.md` for the knowledge model behind the graphdb workers
-- Feature work goes on `develop`; PRs target `main`
+- PRs target `main`

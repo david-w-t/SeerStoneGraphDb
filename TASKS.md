@@ -25,106 +25,79 @@ modernization work is complete. The architecture has been fully designed
 
 ## Task 0 — Pre-implementation: Config and Infrastructure
 
-### 0a. Update `default.config`
+### ~~0a. Update `default.config`~~ — DONE
 
 File: `apps/seerstone/priv/default.config`
 
-Add the following keys. Both relative and absolute paths are accepted; relative paths
-resolve from the OTP release root. Note: `nref_start` is NOT here — it is a one-time
-bootstrap directive in `bootstrap.terms`.
+Added `log_path`, `data_path`, `bootstrap_file` keys; added `{mnesia, [{dir, "data"}]}`
+stanza; removed unused `index_path`. Also updated `config/sys.config` to match.
 
-```erlang
-[{seerstone_graph_db, [
-  {app_port,       8080},
-  {log_path,       "log"},
-  {data_path,      "data"},
-  {bootstrap_file, "apps/graphdb/priv/bootstrap.terms"}
-]},
- {mnesia, [
-  {dir, "data"}    %% must match data_path; Mnesia reads this from its own app env
-]}].
-```
-
-### 0b. Add `set_floor/1` to `nref_server` and `nref_allocator`
+### ~~0b. Add `set_floor/1` to `nref_server` and `nref_allocator`~~ — DONE
 
 Files: `apps/nref/src/nref_server.erl`, `apps/nref/src/nref_allocator.erl`
 
-- Add `nref_server:set_floor(Floor :: integer()) -> ok`
-- Implementation: atomically set the DETS counter to `max(current_counter, Floor)`
-- Called exactly once by `graphdb_bootstrap` at the end of a successful bootstrap run,
-  after all nodes and relationships have been written to Mnesia
-- On all subsequent startups the persisted counter is already `>= Floor`; this function
-  is never called again
-- `get_nref/0` is unchanged; `nref_allocator` startup is unchanged (no config read needed)
+Added `nref_server:set_floor(Floor)` and `nref_allocator:set_floor(Floor)`. Implementation
+atomically sets the DETS counter to `max(current_counter, Floor)`. `nref_server` delegates
+to `nref_allocator:set_floor/1` first, then advances its own `free` counter and sets
+`top = free` to force a fresh block request.
 
-### 0c. ~~Delete stale DETS files~~ — DONE
+### ~~0c. Delete stale DETS files~~ — DONE
 
 `graphdb_attr.dets`, `graphdb_attr_index.dets`, `graphdb_attr_types.dets` deleted from
 the repository root. `nref_allocator.dets` and `nref_server.dets` are retained (live).
 
 ---
 
-## Task 1 — `graphdb_bootstrap` — Bootstrap Loader (New Module)
+## ~~Task 1 — `graphdb_bootstrap` — Bootstrap Loader (New Module)~~ — DONE
 
 File: `apps/graphdb/src/graphdb_bootstrap.erl`
 
-This module is called by `graphdb_mgr:init/1` when the Mnesia `nodes` table is empty.
+Implemented: Mnesia schema/table creation, bootstrap.terms file loader, node and
+relationship writers. `load/0` is idempotent — creates schema/tables if needed,
+skips data load if the `nodes` table is already populated.
 
-**Sub-tasks:**
-
-- Define Mnesia record types:
-  ```erlang
-  -record(node, {nref, kind, parent, attribute_value_pairs}).
-  %% kind :: category | attribute | class | instance
-  -record(relationship, {id, source_nref, characterization, target_nref, reciprocal, avps}).
-  ```
-- Implement Mnesia schema and table creation (called once at first startup):
-  - `nodes` table: `{disc_copies, [node()]}`, index on `parent`
-  - `relationships` table: `{disc_copies, [node()]}`, indexes on `source_nref` and `target_nref`
-- Read `bootstrap_file` path from `application:get_env(seerstone_graph_db, bootstrap_file)`
-- Call `file:consult/1` on the bootstrap file; validate all terms
-- Validate that exactly one `{nref_start, N}` directive is present and that all node
-  nrefs are `< N`; fail fast otherwise
-- Process in this order:
-  1. `{nref_start, N}` directive — call `nref_server:set_floor(N)` **first** so subsequent
-     `get_nref/0` calls for relationship IDs return `>= N`, never colliding with pre-assigned nrefs
-  2. `category` nodes
-  3. `attribute` nodes
-  4. `class` nodes
-  5. `instance` nodes
-  6. `relationship` records — each gets an ID via `get_nref()`; two directed rows per term, atomic
-- Write each node to Mnesia in a transaction
-- Expand each `{relationship, N1, R1, AVPs1, R2, N2, AVPs2}` term into two directed
-  `relationship` records; write both atomically in the same Mnesia transaction
-- Public API:
-  ```erlang
-  graphdb_bootstrap:load() -> ok | {error, Reason :: term()}.
-  ```
+- Mnesia tables: `nodes` (disc_copies, index on `parent`) and `relationships`
+  (disc_copies, indexes on `source_nref` and `target_nref`)
+- Table names are plural; record names are singular — uses `{record_name, node}` /
+  `{record_name, relationship}` option; all Mnesia operations use explicit 3-arg form
+- Processing order: `nref_start` → category → attribute → class → instance → relationships
+- Each relationship term expands to two directed rows; IDs allocated via
+  `nref_server:get_nref/0` outside the Mnesia transaction to avoid side-effects on retry
 
 **Bootstrap file: DONE**
-`apps/graphdb/priv/bootstrap.terms` is fully written: 28 nodes (nrefs 1–28, BFS) and
-27 compositional relationship pairs. See ARCHITECTURE.md Section 4 for the nref table
-and arc label quick-reference.
+`apps/graphdb/priv/bootstrap.terms` is fully written: 30 nodes (nrefs 1–30, BFS) and
+29 relationship pairs (27 compositional + 2 membership arc labels). See ARCHITECTURE.md
+Section 4 for the nref table and arc label quick-reference.
 
 ---
 
-## Task 2 — `graphdb_mgr` — Startup Wiring
+## ~~Task 2 — `graphdb_mgr` — Startup Wiring~~ — DONE
 
 File: `apps/graphdb/src/graphdb_mgr.erl`
 
-**Sub-tasks:**
-- In `init/1`: check if Mnesia `nodes` table exists and is empty
-- If empty (first startup): call `graphdb_bootstrap:load/0`; halt with error if it fails
-- Define the public API (the single entry point for callers outside `graphdb`):
-  - Delegate to `graphdb_attr`, `graphdb_class`, `graphdb_instance` etc.
-  - Reject any runtime request to create, modify, or delete a `category` node with
-    `{error, category_nodes_are_immutable}`
-- Implement transaction-like sequencing: allocate Nref via `nref_server:get_nref/0`
-  → write record → confirm Nref
+Implemented: bootstrap detection in `init/1`, public API skeleton, category
+immutability guard, and read operations.
+
+- **`init/1`**: calls `graphdb_bootstrap:load/0` (idempotent); returns
+  `{stop, {bootstrap_failed, Reason}}` on failure
+- **Read API** (fully functional):
+  - `get_node/1` — Mnesia read by primary key
+  - `get_relationships/1` — outgoing relationships (default)
+  - `get_relationships/2` — directional query (`outgoing | incoming | both`)
+- **Write API** (category guard + delegation stubs):
+  - `create_attribute/3`, `create_class/2`, `create_instance/3`,
+    `add_relationship/4` — return `{error, not_implemented}` pending worker
+    implementation (Tasks 3–5)
+  - `delete_node/1`, `update_node_avps/2` — enforce category immutability
+    guard; return `{error, not_implemented}` for non-category nodes
+- **Category guard**: `check_category_guard/1` reads the node and rejects
+  `kind = category` with `{error, category_nodes_are_immutable}`
+- **Direction validation**: `validate_direction/1` rejects invalid directions
+  client-side before the gen_server call
 
 ---
 
-## Task 3 — `graphdb_attr` — Attribute Library
+## ~~Task 3 — `graphdb_attr` — Attribute Library~~ — DONE
 
 File: `apps/graphdb/src/graphdb_attr.erl`
 
@@ -254,13 +227,13 @@ Correct for the present configuration; revisit if phased startup is desired.
 
 | # | Task | Depends on |
 |---|---|---|
-| 0a | Update `default.config` | — |
-| 0b | Add `nref_server:set_floor/1` API | — |
+| ~~0a~~ | ~~Update `default.config`~~ — **done** | — |
+| ~~0b~~ | ~~Add `nref_server:set_floor/1` API~~ — **done** | — |
 | ~~0c~~ | ~~Delete stale DETS files~~ — **done** | — |
-| 1 | `graphdb_bootstrap` + Mnesia schema | 0a |
-| 2 | `graphdb_mgr` startup wiring | 1 |
-| 3 | `graphdb_attr` | 1, 2 |
-| 4 | `graphdb_class` | 3 |
+| ~~1~~ | ~~`graphdb_bootstrap` + Mnesia schema~~ — **done** | 0a, 0b |
+| ~~2~~ | ~~`graphdb_mgr` startup wiring~~ — **done** | 1 |
+| ~~3~~ | ~~`graphdb_attr`~~ — **done** | 1, 2 |
+| 4 | `graphdb_class` ← **next** | 3 |
 | 5 | `graphdb_instance` | 3, 4 |
 | 6 | `graphdb_rules` | 5 |
 | 7 | `graphdb_language` | 5 |
@@ -268,3 +241,17 @@ Correct for the present configuration; revisit if phased startup is desired.
 | L1 | Non-normal start types | — |
 | L2 | `code_change/3` | — |
 | L3 | `start_phases` | — |
+
+---
+
+## Session Resume
+
+To resume this session, start a new claude or OpenCode session in this repository and paste:
+
+```
+We are resuming implementation of SeerStoneGraphDb.
+Read ARCHITECTURE.md for full design decisions and TASKS.md for the task list.
+All design questions are resolved. bootstrap.terms is complete (nrefs 1-30, BFS).
+Tasks 0a-0c, Task 1 (graphdb_bootstrap), Task 2 (graphdb_mgr startup wiring), Task 3 (graphdb_attr) are done.
+Next task: Task 4 — `graphdb_class` — Taxonomic Hierarchy (step 8 in ARCHITECTURE.md Section 12).
+```

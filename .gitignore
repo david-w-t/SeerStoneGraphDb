@@ -10,3 +10,6 @@ log/
 .idea/
 .claude/settings.local.json
 rebar3
+.wolf/
+.claude/settings.local.json
+CLAUDE.local.md

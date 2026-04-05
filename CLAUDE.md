@@ -1,3 +1,10 @@
+# OpenWolf
+
+@.wolf/OPENWOLF.md
+
+This project uses OpenWolf for context management. Read and follow .wolf/OPENWOLF.md every session. Check .wolf/cerebrum.md before generating code. Check .wolf/anatomy.md before reading files.
+
+
 # SeerStoneGraphDb — Project Guide
 
 ## Project Background
@@ -39,9 +46,9 @@ seerstone (application)
   └── seerstone_sup (supervisor, one_for_one)
         └── database_sup (supervisor)
               ├── graphdb_sup (supervisor)
-              │     ├── graphdb_mgr       (gen_server — stub, implementation pending)
+              │     ├── graphdb_mgr       (gen_server — implemented: bootstrap init, read API, category guard)
               │     ├── graphdb_rules     (gen_server — stub, implementation pending)
-              │     ├── graphdb_attr      (gen_server — stub, implementation pending)
+              │     ├── graphdb_attr      (gen_server — implemented: seeds + create/lookup API)
               │     ├── graphdb_class     (gen_server — stub, implementation pending)
               │     ├── graphdb_instance  (gen_server — stub, implementation pending)
               │     └── graphdb_language  (gen_server — stub, implementation pending)
@@ -58,7 +65,7 @@ nref (application — started independently)
 `nref_include.erl` has been deleted — it was Dallas's earlier unsupervised
 predecessor to `nref_server` and is fully superseded by it.
 
-`graphdb_bootstrap.erl` — new module to be created; loaded by `graphdb_mgr:init/1`
+`graphdb_bootstrap.erl` — implemented; loaded by `graphdb_mgr:init/1`
 on first startup when the Mnesia `nodes` table is empty.
 
 ## Common Coding Conventions
@@ -240,17 +247,17 @@ A logical bidirectional edge is two `relationship` rows written atomically (one 
 
 These are outstanding items — all previously known bugs have been fixed.
 
-- **`graphdb_bootstrap.erl`** — new module to be created; bootstrap file loader and Mnesia schema creator (Task 1)
-- **graphdb worker modules** — all six are gen_server stubs with no real implementation (`graphdb_mgr`, `graphdb_rules`, `graphdb_attr`, `graphdb_class`, `graphdb_instance`, `graphdb_language`)
+- **graphdb worker modules** — five remain as gen_server stubs with no real implementation (`graphdb_rules`, `graphdb_attr`, `graphdb_class`, `graphdb_instance`, `graphdb_language`)
+- **`graphdb_mgr` write operations** — `create_attribute/3`, `create_class/2`, `create_instance/3`, `add_relationship/4`, `delete_node/1`, `update_node_avps/2` return `{error, not_implemented}` pending worker implementation (Tasks 3–5); read operations and category guard are fully functional
 - **`dictionary_server` and `term_server`** — stubs not yet wired to `dictionary_imp` (Task 8)
-- **`nref_server:set_floor/1`** — new API to be added; called once by `graphdb_bootstrap` to advance the environment allocator counter to 10000 before writing any nodes (Task 0b)
 - **`seerstone:start/2` and `nref:start/2`** — non-normal start types (`{takeover,Node}`, `{failover,Node}`) hit `?NYI`; only relevant in distributed/failover deployments
 - **`code_change/3`** — NYI in all gen_server modules; only relevant for hot code upgrades
 - **App lifecycle callbacks** — `start_phase/3`, `prep_stop/1`, `stop/1`, `config_change/3` return `ok` (no-op) across all five app modules; correct for current deployment model
 
 ## Remaining Work
 
-The six graphdb worker modules and `graphdb_bootstrap` are the primary remaining implementation work.
+The five remaining graphdb worker modules are the primary implementation work.
+`graphdb_bootstrap` (Task 1) and `graphdb_mgr` startup wiring (Task 2) are done.
 See `TASKS.md` for the full task list and priority order.
 
 ## Configuration
