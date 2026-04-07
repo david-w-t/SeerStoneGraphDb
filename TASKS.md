@@ -140,7 +140,7 @@ inheritance. Class nodes live in the `nodes` table with `kind = class`.
 
 ---
 
-## Task 5 — `graphdb_instance` — Compositional Hierarchy and Inheritance
+## ~~Task 5 — `graphdb_instance` — Compositional Hierarchy and Inheritance~~ — DONE
 
 File: `apps/graphdb/src/graphdb_instance.erl`
 
@@ -235,8 +235,8 @@ Correct for the present configuration; revisit if phased startup is desired.
 | ~~2~~ | ~~`graphdb_mgr` startup wiring~~ — **done** | 1 |
 | ~~3~~ | ~~`graphdb_attr`~~ — **done** | 1, 2 |
 | ~~4~~ | ~~`graphdb_class`~~ — **done** | 3 |
-| 5 | `graphdb_instance` ← **next** | 3, 4 |
-| 6 | `graphdb_rules` | 5 |
+| ~~5~~ | ~~`graphdb_instance`~~ — **done** | 3, 4 |
+| 6 | `graphdb_rules` ← **next** | 5 |
 | 7 | `graphdb_language` | 5 |
 | 8 | `dictionary_server` / `term_server` | — (independent) |
 | L1 | Non-normal start types | — |
@@ -253,6 +253,6 @@ To resume this session, start a new claude or OpenCode session in this repositor
 We are resuming implementation of SeerStoneGraphDb.
 Read ARCHITECTURE.md for full design decisions and TASKS.md for the task list.
 All design questions are resolved. bootstrap.terms is complete (nrefs 1-30, BFS).
-Tasks 0a-0c, Task 1 (graphdb_bootstrap), Task 2 (graphdb_mgr startup wiring), Task 3 (graphdb_attr), Task 4 (graphdb_class) are done.
-Next task: Task 5 — `graphdb_instance` — Compositional Hierarchy and Inheritance (step 9 in ARCHITECTURE.md Section 12).
+Tasks 0a-0c, Task 1 (graphdb_bootstrap), Task 2 (graphdb_mgr startup wiring), Task 3 (graphdb_attr), Task 4 (graphdb_class), Task 5 (graphdb_instance) are done.
+Next task: Task 6 — `graphdb_rules` — Graph Rules (step 11 in ARCHITECTURE.md Section 12).
 ```

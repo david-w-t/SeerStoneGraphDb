@@ -531,7 +531,7 @@ SeerStoneGraphDb/
 5. ~~`graphdb_mgr`~~ — **done** bootstrap detection in `init/1`; read `bootstrap_file` from env; call loader ← **next**
 7. ~~`graphdb_attr` — implement attribute library (Mnesia-backed)
 8. ~~`graphdb_class` — implement taxonomic hierarchy (Mnesia-backed)~~ — **done**
-9. `graphdb_instance` — implement compositional hierarchy + inheritance (Mnesia-backed)
+9. ~~`graphdb_instance` — implement compositional hierarchy + inheritance (Mnesia-backed)~~ — **done**
 10. `graphdb_mgr` — route public API calls to workers
 11. `graphdb_rules` — rule storage and enforcement
 12. `graphdb_language` — query parser and executor
