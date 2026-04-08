@@ -15,16 +15,16 @@ underway:
 | Component | Status |
 |---|---|
 | `nref` subsystem | Fully implemented (DETS-backed ID allocator with `set_floor/1`) |
-| `dictionary` subsystem | `dictionary_imp` implemented; server stubs not yet wired |
+| `dictionary` subsystem | `dictionary_imp` implemented; server stubs not yet wired (Task 7) |
 | `graphdb_bootstrap` | Fully implemented — Mnesia schema/table creation, bootstrap scaffold loader (30 nodes, 29 relationship pairs) |
-| `graphdb_mgr` | Implemented — bootstrap init, public read API (`get_node`, `get_relationships`), category immutability guard; write operations delegate to workers (pending) |
-| `graphdb_attr` | Implemented |
-| `graphdb_class` | Gen_server stub — next to implement |
-| `graphdb_instance` | Gen_server stub |
-| `graphdb_rules` | Gen_server stub |
-| `graphdb_language` | Gen_server stub |
+| `graphdb_mgr` | Implemented — bootstrap init, public read API (`get_node`, `get_relationships`), category immutability guard; write operations delegate to workers |
+| `graphdb_attr` | Fully implemented — attribute library (name, literal, relationship attributes, relationship types) |
+| `graphdb_class` | Fully implemented — taxonomic hierarchy, qualifying characteristics, class-level inheritance |
+| `graphdb_instance` | Fully implemented — compositional hierarchy, instance-to-class membership, four-level inheritance resolution |
+| `graphdb_rules` | Gen_server stub — deferred to Enhancements (pattern recognition, relationship constraints) |
+| `graphdb_language` | Gen_server stub — next to implement (Task 6) |
 
-**79 tests** (44 EUnit + 35 Common Test) — all passing. See `TASKS.md` for a
+**156 tests** (62 EUnit + 94 Common Test) — all passing. See `TASKS.md` for a
 prioritised task list.
 
 ---
@@ -73,7 +73,7 @@ SeerStoneGraphDb/
 ├── apps/
 │   ├── seerstone/     # Top-level OTP application and supervisor
 │   ├── database/      # database application (supervises graphdb + dictionary)
-│   ├── graphdb/       # Graph database application and worker stubs
+│   ├── graphdb/       # Graph database application and workers
 │   ├── dictionary/    # ETS/file-backed key-value dictionary application
 │   └── nref/          # Globally unique node-reference ID allocator
 ├── rebar.config       # rebar3 umbrella build configuration
@@ -163,7 +163,7 @@ Priority order — each step applies only to attributes not yet resolved by a hi
 | `graphdb_attr`     | Attribute library — name attributes, literal attributes, relationship attributes, relationship types |
 | `graphdb_class`    | Taxonomic hierarchy — class nodes, qualifying characteristics, class inheritance |
 | `graphdb_instance` | Instance nodes — creation, retrieval, compositional hierarchy                    |
-| `graphdb_rules`    | Graph rules — pattern recognition and relationship constraints                   |
+| `graphdb_rules`    | Graph rules — pattern recognition and relationship constraints (deferred to Enhancements) |
 | `graphdb_language` | Query language — parsing and executing graph queries                             |
 | `graphdb_mgr`      | Primary coordinator — routes operations across the other five workers            |
 
@@ -189,14 +189,26 @@ Priority order — each step applies only to attributes not yet resolved by a hi
 # Run all Common Test suites (integration tests with isolated Mnesia)
 ./rebar3 ct --suite=apps/graphdb/test/graphdb_bootstrap_SUITE
 ./rebar3 ct --suite=apps/graphdb/test/graphdb_mgr_SUITE
+./rebar3 ct --suite=apps/graphdb/test/graphdb_attr_SUITE
+./rebar3 ct --suite=apps/graphdb/test/graphdb_class_SUITE
+./rebar3 ct --suite=apps/graphdb/test/graphdb_instance_SUITE
+
+# Or run everything at once
+./rebar3 eunit --app=graphdb && ./rebar3 ct
 ```
 
 | Suite | Type | Tests | Coverage |
 |---|---|---|---|
 | `graphdb_bootstrap_tests` | EUnit | 35 | Term parsing, validation, record conversion |
 | `graphdb_mgr_tests` | EUnit | 9 | Direction validation, client-side arg checks |
+| `graphdb_attr_tests` | EUnit | 11 | Attribute type seeding, pure function checks |
+| `graphdb_class_tests` | EUnit | 11 | `is_valid_parent_kind/1`, `collect_qc_nrefs/2` |
+| `graphdb_instance_tests` | EUnit | 7 | `find_avp_value/2` |
 | `graphdb_bootstrap_SUITE` | CT | 16 | Full bootstrap load, Mnesia tables, idempotency, error handling |
 | `graphdb_mgr_SUITE` | CT | 19 | Bootstrap init, read ops, category guard, write stubs |
+| `graphdb_attr_SUITE` | CT | 22 | Attribute create/lookup, seeding, relationship types |
+| `graphdb_class_SUITE` | CT | 22 | Class create, QC, lookups, hierarchy, inheritance |
+| `graphdb_instance_SUITE` | CT | 23 | Instance create, relationships, lookups, hierarchy, four-level inheritance |
 
 Each CT test case runs in an isolated Mnesia database with a fresh nref
 allocator in a private temp directory.
