@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`graphdb` is the core **graph database** OTP application within the SeerStone system. It is supervised by `database_sup` and itself manages graph data through `graphdb_sup` and six worker gen_servers. The data model is the knowledge graph described in `knowledge-graph-database-guide.md` (US patents 5,379,366; 5,594,837; 5,878,406 — Noyes).
+`graphdb` is the core **graph database** OTP application within the SeerStone system. It is supervised by `database_sup` and itself manages graph data through `graphdb_sup` and six worker gen_servers. The data model is the knowledge graph described in `the-knowledge-network.md` (US patents 5,379,366; 5,594,837; 5,878,406 — Noyes).
 
 ## Files
 
@@ -19,8 +19,7 @@
 | `graphdb_language.erl`     | Query language gen_server (stub)                          |
 
 `apps/graphdb/priv/bootstrap.terms` — Erlang Terms file fully written; contains 30 nodes
-(nrefs 1–30, BFS) and 29 compositional relationship pairs. Loaded at first environment
-database startup.
+(nrefs 1–30, BFS) and 29 compositional relationship pairs. Loaded at first ontology startup.
 
 ## Application Lifecycle
 
@@ -44,10 +43,10 @@ Two database roles operate in parallel:
 
 | Role | Content | Mutability |
 |---|---|---|
-| **Environment database** | All category, attribute, class, and language nodes; bootstrap scaffold; arc label definitions | Category nodes: immutable (bootstrap-only). All other nodes grow freely at runtime. |
-| **Project database** | Instance nodes and their relationships; one per project | Fully mutable at runtime |
+| **Ontology** | All category, attribute, class, and language nodes; bootstrap scaffold; arc label definitions | Category nodes: immutable (bootstrap-only). All other nodes grow freely at runtime. |
+| **Project (instance space)** | Instance nodes and their relationships; one per project | Fully mutable at runtime |
 
-The environment is shared across all projects and is a **living, growing database**: new literal attributes, relationship attributes, and classes are added over time. Only category nodes (nrefs 1–5) are permanently fixed.
+The ontology is shared across all projects and is a **living, growing database**: new literal attributes, relationship attributes, and classes are added over time. Only category nodes (nrefs 1–5) are permanently fixed.
 
 nref spaces:
 - **Environment**: bootstrap nrefs 1–30; runtime nrefs 10000+ (floor set by `{nref_start, 10000}` directive in `bootstrap.terms`)
@@ -199,7 +198,7 @@ Loaded by `graphdb_mgr:init/1` when the Mnesia `nodes` table is empty (first sta
 ### `graphdb_attr` — Attribute Library
 
 Maintains all named attribute concepts used as arc labels. All attribute nodes live in
-the environment `nodes` Mnesia table with `kind = attribute`.
+the ontology `nodes` Mnesia table with `kind = attribute`.
 
 - `create_name_attribute/1` (name)
 - `create_literal_attribute/2` (name, type)
@@ -210,7 +209,7 @@ the environment `nodes` Mnesia table with `kind = attribute`.
 
 ### `graphdb_class` — Taxonomic Hierarchy
 
-Manages the "is a" hierarchy of class nodes in the environment database.
+Manages the "is a" hierarchy of class nodes in the ontology.
 
 - `create_class/2` (name, parent_class_nref)
 - `add_qualifying_characteristic/2` (class_nref, attribute_nref)
@@ -218,7 +217,7 @@ Manages the "is a" hierarchy of class nodes in the environment database.
 
 ### `graphdb_instance` — Instance & Compositional Hierarchy
 
-Creates and manages instance nodes in the project database.
+Creates and manages instance nodes in the project (instance space).
 
 - `create_instance/3` (name, class_nref, compositional_parent_nref) — atomically writes the node record AND the instance→class membership relationship pair (arc labels nref=29 and nref=30)
 - `add_relationship/4` (source_nref, characterization_nref, target_nref, reciprocal_nref) — writes two directed rows atomically; IDs allocated via `get_nref()`
@@ -263,7 +262,7 @@ All six worker modules (`graphdb_mgr`, `graphdb_rules`, `graphdb_attr`, `graphdb
 
 - `graphdb_sup` receives `StartArgs` from `database:start/2`, unlike `seerstone_sup` which takes no args
 - Implement in dependency order: `graphdb_bootstrap` → `graphdb_mgr` (startup wiring) → `graphdb_attr` → `graphdb_class` → `graphdb_instance` → `graphdb_rules` → `graphdb_language` → `graphdb_mgr` (full routing). See `TASKS.md` for the detailed breakdown.
-- Consult `knowledge-graph-database-guide.md` for the full model spec before implementing
+- Consult `the-knowledge-network.md` for the full model spec before implementing
 
 ## Compile
 

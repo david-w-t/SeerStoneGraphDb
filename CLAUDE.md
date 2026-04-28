@@ -110,7 +110,7 @@ Maintain this structure when adding new modules.
 ## Knowledge Model
 
 This database is an implementation of the knowledge graph model described in
-`knowledge-graph-database-guide.md` (sourced from US patents 5,379,366;
+`the-knowledge-network.md` (sourced from US patents 5,379,366;
 5,594,837; 5,878,406 — Noyes; and Cogito knowledge center documentation).
 
 ### Core Concepts
@@ -131,8 +131,8 @@ Two database roles:
 
 | Role | Content | Mutability |
 |---|---|---|
-| **Environment database** | All category, attribute, class, and language nodes; bootstrap scaffold; arc label definitions | Category nodes: immutable (bootstrap-only). All other nodes grow freely at runtime. |
-| **Project database** | Instance nodes and their relationships; one database per project | Fully mutable at runtime |
+| **Ontology** | All category, attribute, class, and language nodes; bootstrap scaffold; arc label definitions | Category nodes: immutable (bootstrap-only). All other nodes grow freely at runtime. |
+| **Project (instance space)** | Instance nodes and their relationships; one database per project | Fully mutable at runtime |
 
 The environment is shared across all projects. Only bootstrap nrefs (1–30) and a small number of explicitly seeded runtime nrefs (e.g., `target_kind`) are referenced by nref constant in code — all other runtime-added nodes are treated generically.
 
