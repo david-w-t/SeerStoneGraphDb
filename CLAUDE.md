@@ -34,7 +34,7 @@ SeerStoneGraphDb/
 ├── rebar.config       # rebar3 umbrella build configuration
 ├── rebar.lock         # Locked dependency versions
 ├── Makefile           # Convenience targets (compile, shell, release, clean, rebar3)
-├── ARCHITECTURE.md    # Full architectural design (all decisions resolved)
+├── ARCHITECTURE.md    # High-level architecture; kept current with the code
 ├── TASKS-CRITICAL.md  # Schema-level tasks (must land before live data)
 ├── TASKS-HIGH.md      # Inheritance/membership correctness bugs
 ├── TASKS-MEDIUM.md    # Semantic departures + query language + rules engine

@@ -1,538 +1,365 @@
-# Architectural Design Proposal — SeerStoneGraphDb
+# SeerStoneGraphDb — Architecture
 
-> **Status:** Design phase complete — all questions resolved. Bootstrap nrefs assigned (BFS, 1–30). `apps/graphdb/priv/bootstrap.terms` written. Ready for implementation.
-
----
-
-## 1. Codebase Baseline
-
-| Area | State |
-|---|---|
-| Build | Compiles cleanly — zero warnings (OTP 27 / rebar3 3.24) |
-| `nref_server` / `nref_allocator` | Fully implemented; DETS-backed; `set_floor/1` added |
-| `dictionary_imp` | Implemented; not yet wired to `dictionary_server` or `term_server` |
-| `dictionary_server`, `term_server` | Stubs |
-| All 6 `graphdb_*` workers | Empty gen_server stubs — no graph logic |
-| Stale DETS files on disk | `graphdb_attr.dets`, `graphdb_attr_index.dets`, `graphdb_attr_types.dets` — deleted; were produced by a prior AI session, superseded by Mnesia |
+> High-level shape of the system. Updated as the code's architecture changes — not as
+> implementation progresses within an already-described component. The canonical
+> spec is [`the-knowledge-network.md`](the-knowledge-network.md); the kernel
+> implements that model. Outstanding work is grouped by severity in
+> `TASKS-CRITICAL.md`, `TASKS-HIGH.md`, `TASKS-MEDIUM.md`, and `TASKS-LOW.md`.
 
 ---
 
-## 2. Configuration File
+## 1. Status
 
-### Decision
-
-Extend the existing `apps/seerstone/priv/default.config` with four new keys under the `seerstone_graph_db` application env. This is the single authoritative runtime config.
-
-```erlang
-[{seerstone_graph_db, [
-  {app_port,       8080},
-  {log_path,       "log"},
-  {data_path,      "data"},
-  {bootstrap_file, "apps/graphdb/priv/bootstrap.terms"}
-]},
- {mnesia, [
-  {dir, "data"}                   %% Mnesia reads its own dir from its app env
-]}].
-```
-
-| Key | Purpose |
+| Component | State |
 |---|---|
-| `log_path` | Directory for log files |
-| `data_path` | Directory for Mnesia database files and nref DETS files |
-| `bootstrap_file` | Path to the bootstrap `.terms` file; read on first startup when schema is empty |
+| Build | Compiles clean — zero warnings (OTP 27 / rebar3 3.24) |
+| `nref` subsystem | Fully implemented; DETS-backed; `set_floor/1` API |
+| `dictionary_imp` | Implemented; not yet wired to `dictionary_server` / `term_server` |
+| `graphdb_bootstrap` | Implemented — Mnesia schema, table creation, scaffold loader |
+| `graphdb_mgr` | Implemented — bootstrap startup, read API, category guard. Write-side delegation pending. |
+| `graphdb_attr` | Implemented — attribute library (name, literal, relationship attributes) |
+| `graphdb_class` | Implemented — taxonomic hierarchy (single inheritance only — see §10) |
+| `graphdb_instance` | Implemented — compositional hierarchy + four-level inheritance (single class membership only — see §10) |
+| `graphdb_rules` | Stub |
+| `graphdb_language` | Stub |
+| Tests | 156 passing (94 Common Test + 62 EUnit) |
 
-### Path resolution
-
-Both relative and absolute paths are accepted for `log_path`, `data_path`, and `bootstrap_file`. Relative paths are resolved from the OTP release root at runtime (standard OTP convention). Absolute paths take effect as-is. Use relative paths for packaged releases; absolute paths for development overrides.
-
-### Mnesia dir configuration
-
-Mnesia reads its storage directory from its own application env key `{mnesia, dir}`. This is set directly in `default.config` (alongside the `seerstone_graph_db` env) so no code needs to call `application:set_env/3` for it. The value must match `data_path`.
-
-### nref_start does not belong in config
-
-`nref_start` is a one-time bootstrap value, not a runtime config value. After the first
-bootstrap run, the nref allocator's DETS counter is already `>= nref_start` and persisted;
-the value is never consulted again. It belongs in `bootstrap.terms` alongside the data it
-governs — see Section 7.
+The kernel is functional under single-class-membership / single-inheritance
+semantics. Multi-inheritance, template-scoped connections, and
+multilingual support are open architectural questions — see §10.
 
 ---
 
-## 3. Storage: graphdb Workers Move to Mnesia
+## 2. Storage
 
-### Decision
+| Subsystem | Storage | Why |
+|---|---|---|
+| `graphdb_*` (nodes, relationships) | **Mnesia** (`disc_copies`) | ACID across tables, secondary indexes, distribution-ready |
+| `nref_allocator` / `nref_server` | DETS | Simple persistent counter; no relational query needs |
+| `dictionary_imp` | ETS + `tab2file` | In-memory cache, persistent serialisation |
 
-Replace DETS (per-worker) with **Mnesia** for all six `graphdb_*` workers.
-
-### Rationale
-
-| Problem with DETS | Mnesia solution |
-|---|---|
-| No cross-table transactions | Full ACID transactions across tables |
-| No secondary indexes | First-class `index_read` on any field |
-| Single-writer bottleneck | Concurrent reads; serialized writes via transaction manager |
-| No distribution | `{disc_copies, Nodes}` replication built in |
-| External files per worker | Single unified schema; files go in `data_path` |
-
-### Scope
-
-- `nref_allocator` / `nref_server` — **stay on DETS** (working; simple counter; already persistent)
-- `dictionary_imp` / `dictionary_server` — **stay on ETS** (appropriate for an in-memory cache)
-- All `graphdb_*` workers — **move to Mnesia**
-
-### Mnesia table layout
-
-Two tables cover the full graph:
+### Mnesia tables
 
 ```
-nodes         — one record per concept node
-relationships — one record per directed arc (two records per logical bidirectional edge)
+nodes         — one row per concept node             (primary key: nref)
+relationships — one row per directed arc             (primary key: id)
 ```
 
-This separation is critical: embedding relationships as a list inside the node record (as in Dallas's original DETS schema) makes reverse-lookup (finding all arcs pointing *to* a node) an O(N) full-table scan. A separate `relationships` table with a secondary index on `target_nref` makes reverse-lookup O(1) via `mnesia:index_read/3`.
+Two tables cover the entire graph. Bidirectional logical edges are stored
+as two directed rows in `relationships`, written atomically.
+
+**Indexes:**
+- `nodes` — secondary on `parent` for O(1) `children/1`.
+- `relationships` — secondary on `source_nref` and `target_nref` for O(1)
+  forward and reverse traversal.
+
+Embedding relationships inside the node record (Dallas's original DETS
+design) is rejected: it makes reverse-lookup an O(N) full-scan and
+prevents transactional updates spanning both endpoints.
 
 ---
 
-## 4. Node Record Design
-
-### Mnesia record
+## 3. Node Record
 
 ```erlang
 -record(node, {
   nref,                   %% integer() — primary key
   kind,                   %% category | attribute | class | instance
-  parent,                 %% integer() | undefined (undefined = root only)
+  parent,                 %% integer() | undefined  (undefined = root only)
   attribute_value_pairs   %% [#{attribute => Nref, value => term()}]
 }).
 ```
 
-Secondary index: `parent` — enables efficient `children/1` queries.
-
 ### Node kinds
 
-| Kind | Description | Creatable at runtime? |
+| Kind | Purpose | Creatable at runtime? |
 |---|---|---|
-| `category` | Permanent top-level organisational scaffold; forms the skeleton of the entire graph | **No — bootstrap only** |
+| `category` | Top-level organisational scaffold; bootstrap skeleton | **No** — bootstrap-only |
 | `attribute` | Named concept used as an arc label, name attribute, or literal attribute descriptor | Yes |
-| `class` | Type/schema node; manages the taxonomic ("is a") hierarchy | Yes |
-| `instance` | Concrete entity; managed by the compositional ("part of") hierarchy | Yes |
+| `class` | Type/schema; manages the taxonomic ("is a") hierarchy | Yes |
+| `instance` | Concrete entity in a project; managed by the compositional ("part of") hierarchy | Yes |
 
-`category` nodes cannot be created, modified, or deleted via any runtime API. `graphdb_mgr` exposes no `create_category` function. Attempts to write a `category` node outside of `graphdb_bootstrap` are rejected.
+`category` immutability is enforced by `graphdb_mgr:check_category_guard/1`;
+no runtime API can create, modify, or delete a `category` node.
 
-### Root node
+### Root and bootstrap scaffold
 
-- Nref = **1** (first and lowest possible nref; pre-assigned in the bootstrap file)
-- `kind = category`, `parent = undefined`
-- The only node in the database where `parent` is `undefined`
+The root node is `nref = 1`, `kind = category`, `parent = undefined`. It is
+the only node in the database with `parent = undefined`.
 
-### Bootstrap tree skeleton — nrefs assigned (BFS, 1–30)
-
-Nrefs are assigned breadth-first. Attribute nodes under **Names** provide the `NameAttrNref` values used in node records; attribute nodes under **Relationships** provide the `characterization`/`reciprocal` arc labels used in the `relationships` table.
+Five top-level categories are pre-assigned at bootstrap:
 
 ```
- 1  Root (category)
- 2  ├── Attributes (category)
- 3  ├── Classes (category)
- 4  ├── Languages (category)
- 5  └── Projects (category)
-        (children of Attributes:)
- 6      ├── Names (attribute)
- 7      ├── Literals (attribute)              ← children TBD
- 8      └── Relationships (attribute)
-            (children of Names — Attribute before Class:)
- 9          ├── Category Name Attributes (attribute)
-10          ├── Attribute Name Attributes (attribute)
-11          ├── Class Name Attributes (attribute)
-12          └── Instance Name Attributes (attribute)
-            (children of Relationships — Attribute before Class:)
-13          ├── Category Relationships (attribute)
-14          ├── Attribute Relationships (attribute)
-15          ├── Class Relationships (attribute)
-16          └── Instance Relationships (attribute)
-            (children of *Name Attributes — one Name per kind, BFS:)
-17              ├── Name  ← NameAttrNref for category nodes   (parent:  9)
-18              ├── Name  ← NameAttrNref for attribute nodes  (parent: 10, self-ref)
-19              ├── Name  ← NameAttrNref for class nodes      (parent: 11)
-20              └── Name  ← NameAttrNref for instance nodes   (parent: 12)
-            (children of *Relationships — arc label nodes, BFS:)
-21              ├── Parent    category  compositional arc label (parent: 13)
-22              ├── Child     category  compositional arc label (parent: 13)
-23              ├── Parent    attribute compositional arc label (parent: 14, self-ref)
-24              ├── Child     attribute compositional arc label (parent: 14, self-ref)
-25              ├── Parent    class     compositional arc label (parent: 15)
-26              ├── Child     class     compositional arc label (parent: 15)
-27              ├── Parent    instance  compositional arc label (parent: 16)
-28              ├── Child     instance  compositional arc label (parent: 16)
-29              ├── Class     instance→class membership arc    (parent: 16)
-30              └── Instance  class→instances membership arc   (parent: 16)
+1  Root
+2  ├── Attributes  (parent of Names, Literals, Relationships subtrees)
+3  ├── Classes     (parent of all class taxonomies)
+4  ├── Languages   (multilingual support — see §10)
+5  └── Projects    (organisational anchor for project databases — see §6)
 ```
 
-### NameAttrNref quick-reference
-
-| Kind | NameAttrNref |
-|---|---|
-| `category` | 17 |
-| `attribute` | 18 |
-| `class` | 19 |
-| `instance` | 20 |
-
-### Compositional arc labels quick-reference
-
-Arc labels used in `{relationship, ParentNref, ChildArcNref, [], ParentArcNref, ChildNref, []}` terms. `ChildArcNref` is the characterization on the parent→child directed row; `ParentArcNref` is the characterization on the child→parent directed row.
-
-| Child kind | ChildArcNref | ParentArcNref |
-|---|---|---|
-| `category` | 22 (Child/CatRel) | 21 (Parent/CatRel) |
-| `attribute` | 24 (Child/AttrRel) | 23 (Parent/AttrRel) |
-| `class` | 26 (Child/ClassRel) | 25 (Parent/ClassRel) |
-| `instance` | 28 (Child/InstRel) | 27 (Parent/InstRel) |
-
-The attribute row (nrefs 23 and 24) is self-referential: the arc label attribute nodes for "attribute" compositional arcs are themselves attribute nodes whose own parent arc label is nref 23. This is consistent — the system uses its own arc label vocabulary to describe itself.
-
-### Instance-to-class membership arc labels
-
-| Nref | Name | Direction | Usage |
-|---|---|---|---|
-| 29 | Class | instance → its class | `characterization` on the instance→class row |
-| 30 | Instance | class → its instances | `characterization` on the class→instance row |
-
-Usage in the relationships table:
-```erlang
-%% Writing instance membership: {relationship, InstNref, 29, [], 30, ClassNref, []}
-%% Expands to:
-%%   Row 1: source=InstNref,  characterization=29 (Class),    target=ClassNref, reciprocal=30
-%%   Row 2: source=ClassNref, characterization=30 (Instance), target=InstNref,  reciprocal=29
-```
-
-These are the only arc labels that cross the taxonomic/compositional boundary. `graphdb_instance:create_instance/3` writes this relationship pair atomically alongside the node record.
+The full 30-node BFS scaffold (nrefs 1–30) is documented in
+`apps/graphdb/priv/bootstrap.terms`. Code that needs specific nrefs uses
+the constants defined as macros in the worker that owns them
+(`graphdb_attr`, `graphdb_class`, `graphdb_instance`).
 
 ---
 
-## 5. Relationship Record Design
-
-### Mnesia record
+## 4. Relationship Record
 
 ```erlang
 -record(relationship, {
-  id,               %% integer() — primary key (nref allocated normally)
+  id,               %% integer() — primary key
   source_nref,      %% integer() — arc origin
   characterization, %% integer() — arc label (an attribute nref)
   target_nref,      %% integer() — arc target
-  reciprocal,       %% integer() — arc label as seen from target back (an attribute nref)
+  reciprocal,       %% integer() — arc label as seen from target back
   avps              %% [#{attribute => Nref, value => term()}] — per-direction metadata
 }).
 ```
 
-Secondary indexes: `source_nref`, `target_nref`.
+### Bidirectional storage
 
-A logical bidirectional edge is expressed as **two** `relationship` records — one for each direction — written atomically in the same Mnesia transaction. The `graphdb_bootstrap` loader does this expansion when processing `{relationship, ...}` terms from the bootstrap file.
+A logical edge between two nodes is stored as **two** rows, one per
+direction, written atomically in a single Mnesia transaction. The
+`graphdb_bootstrap` loader and `graphdb_instance:add_relationship` both
+expand a single bidirectional intent into two directed records.
 
-### Arc storage by node kind
+### Per-arc metadata
 
-| Kind | `parent` field | `relationship` table records |
-|---|---|---|
-| `category` | Yes — fast tree traversal | **Yes** — explicit arc records using Category Relationships/Parent + Child labels; both directions written atomically |
-| `attribute` | Yes | Yes — using Attribute Relationships/Parent + Child labels |
-| `class` | Yes | TBD — to be decided when class node implementation begins |
-| `instance` | Yes | Yes — user-defined arcs via `add_relationship/4` |
+`avps` carries metadata that is asymmetric between the two directions —
+provenance, confidence, weights, validity time frames, flags. Per
+[`the-knowledge-network.md`](the-knowledge-network.md) §5, this metadata
+is part of the connection's identity for ASSOCIATE-type arcs, but does
+not participate in graph traversal by default.
 
-Category and attribute compositional arcs are written as explicit `{relationship, ...}` terms in `bootstrap.terms`. The loader writes them like any other relationship — no special-casing. The `parent` field provides O(1) tree traversal; the `relationships` table provides arc-query consistency (finding all inbound arcs via `index_read` on `target_nref`).
+### Pending schema additions
 
-### Additional-parents flag/count: Decision — Not needed
+Two fields are required by the spec but not yet on the record. See §10
+and `TASKS-CRITICAL.md`:
 
-The user raised this question: given single compositional parent (the `parent` field), should the node record carry a flag or count to indicate that additional parents exist in the relationships?
+- `template_nref` — template context for ASSOCIATE connections.
+- `kind` — explicit relationship type (`taxonomy | composition |
+  connection | instantiation`).
 
-**Recommendation: No.** Reasons:
-
-1. The `relationships` table is indexed on `target_nref`. Finding all inbound arcs for node X is a single `mnesia:index_read(relationship, X, #relationship.target_nref)` call — O(1), no node record scan required.
-2. A denormalized flag/count creates an update obligation: every `add_relationship` and `delete_relationship` call must atomically update both the relationship table and the node record. This increases transaction complexity and surface area for bugs.
-3. The flag only answers "does an additional parent exist?" — it does not identify which nodes those parents are. So callers still need the `index_read` call regardless.
-
-Conclusion: the secondary index on `target_nref` provides everything the flag would, without the consistency risk.
+Both must land before the database holds live data.
 
 ---
 
-## 6. Multi-Database Architecture
+## 5. Supervision Tree
 
-### Two database roles
+```
+seerstone (application)
+  └── seerstone_sup (one_for_one)
+        └── database_sup
+              ├── graphdb_sup
+              │     ├── graphdb_mgr        — primary coordinator, bootstrap startup
+              │     ├── graphdb_attr       — attribute library
+              │     ├── graphdb_class      — taxonomic hierarchy
+              │     ├── graphdb_instance   — compositional hierarchy + inheritance
+              │     ├── graphdb_rules      — rule storage/enforcement (stub)
+              │     └── graphdb_language   — query language (stub)
+              └── dictionary_sup
+                    ├── dictionary_server  — (stub, not wired to dictionary_imp)
+                    └── term_server        — (stub, not wired to dictionary_imp)
 
-| Role | Content | Mutability |
+nref (application — independent, started before seerstone)
+  └── nref_sup
+        ├── nref_allocator                 — DETS-backed counter
+        └── nref_server                    — public nref API; calls allocator
+```
+
+Worker boundaries: each `graphdb_*` worker owns the schema/contract it
+maintains. `graphdb_mgr` is the public entry point and routes to the
+workers — read path implemented; write-side routing is pending
+(`TASKS-LOW.md` L4).
+
+---
+
+## 6. Ontology and Project (Instance Space)
+
+The system separates definitional knowledge from instance data.
+
+| Body | Contents | Mutability |
 |---|---|---|
-| **Environment database** | All category, attribute, class, and language nodes; the bootstrap scaffold; arc label definitions | Category nodes: immutable (bootstrap only). All other nodes grow freely at runtime. |
-| **Project database** | Instance nodes and their relationships; one database per project | Fully mutable at runtime |
+| **Ontology** | Categories, attributes, classes, languages, templates, rules — the bootstrap scaffold and the live schema | Categories: immutable. All other nodes grow at runtime. |
+| **Project (instance space)** | Instance nodes and their relationships — one database per project | Fully mutable |
 
-The environment is shared across all projects. It is the single source of truth for the knowledge schema — arc labels, class definitions, name attributes, and the category scaffold. It is a **living, growing database**: new literal attributes, relationship attributes, and classes are added over time as the knowledge base evolves. Only the category nodes (nrefs 1–5) are permanently fixed.
-
-**Code understanding of nrefs**: Only the bootstrap nrefs (1–30) and a small number of explicitly seeded runtime nrefs (e.g., `target_kind`) are referenced directly by nref constant in the implementation. All other runtime-added attributes, classes, and languages are treated generically by the code — their meaning lives in the graph itself, not in the source.
+The ontology is shared across all projects. The same ontology can serve
+unrelated domains. Project databases are independent — multiple may
+exist on the same node, each with its own Mnesia schema.
 
 ### What lives where
 
 | Concept | Database |
 |---|---|
-| Category nodes (nrefs 1–5) | Environment |
-| Attribute nodes (nrefs 6–30, 10000+) | Environment |
-| Class nodes (runtime, 10000+) | Environment |
-| Language nodes | Environment |
+| Category, attribute, class, language nodes | Ontology |
+| Bootstrap compositional arcs | Ontology |
+| Runtime attribute / class compositional arcs | Ontology |
 | Instance nodes | Project |
-| Class-membership relationship pairs | Project |
 | Instance compositional arcs | Project |
-| Instance user-defined arcs | Project |
-| Bootstrap compositional arcs (scaffold) | Environment |
-| Runtime attribute compositional arcs (new attrs added to library) | Environment |
-| Runtime class taxonomy arcs | Environment |
-
-### nref spaces
-
-| Database | nref range | nref_start | Allocator start |
-|---|---|---|---|
-| Environment | 1–30 (bootstrap) + 10000+ (runtime) | 10000 (in `bootstrap.terms`) | 10000 after bootstrap load |
-| Project | 1+ | None — no bootstrap file | **1** |
-
-Project databases have no pre-assigned nrefs and no bootstrap file. Their nref allocator starts at 1 and increments freely. Numerical overlap with environment nrefs (e.g., both may have a node with nref=10001) is not a problem because every nref lookup is routed to a specific database determined by context — see **Cross-database nref resolution** below.
-
-### The Projects node (nref 5)
-
-The `Projects` category node (nref 5) in the environment database is the organisational anchor for all projects. Two access modes exist:
-
-**Known projects** — listed as child nodes of the Projects node in the environment database. Each child node contains everything needed to locate and open the project database (connection info, path, credentials, etc.). At runtime, that environment node is *overlaid* by the root node of the actual project database: queries that arrive at the environment's project-stub node are transparently forwarded to the project's own root.
-
-**Private/unknown projects** — not listed in the environment database. Only users who have been given access to the project can open it. For those users the project root appears as a virtual child of the Projects node, not backed by any node in the environment database.
-
-In both cases, whether a project appears under the Projects node is optional and independent of whether the project database itself exists and is operational.
+| Instance → class membership arcs | Project |
+| Instance user-defined connections | Project |
 
 ### Cross-database nref resolution
 
-All nrefs are plain `integer()` values; there is no database tag embedded in the integer. Context determines which database to query for each field:
+Nrefs are plain `integer()`s with no embedded database tag. Context
+determines routing:
 
-| Relationship field | Always in |
+| Relationship field | Resolves to |
 |---|---|
-| `source_nref` | Same database as the relationship record |
-| `characterization` | Environment (entire attribute library lives there) |
-| `reciprocal` | Environment |
-| `target_nref` | Determined by the arc label's `target_kind` annotation |
+| `source_nref` | Same database as the relationship row |
+| `characterization`, `reciprocal` | Always the ontology |
+| `target_nref` | Routed by the arc label's `target_kind` AVP |
 
-**`target_kind` annotation**: Every arc label attribute node in the environment must carry a literal AVP specifying what kind of node its arc targets. Since `kind` determines the database, this resolves the lookup:
+`target_kind :: category | attribute | class | instance` is stored as a
+literal AVP on every arc-label attribute node. Built-in arc labels
+(nrefs 21–30) carry it; `graphdb_attr:create_relationship_attribute/3`
+requires it for runtime additions.
 
-| target_kind value | Target database |
-|---|---|
-| `category` | Environment |
-| `attribute` | Environment |
-| `class` | Environment |
-| `instance` | Project |
+### The `Projects` node (nref 5)
 
-This annotation is stored in the `Literals` subtree (nref 7) of the environment attribute library. It must be present on all built-in arc labels at bootstrap time and required for all user-defined arc labels at creation time via `graphdb_attr`.
-
-Built-in resolution for the 30 bootstrap arc labels:
-
-| Nref | Arc label | target_kind |
-|---|---|---|
-| 21 | Parent/CatRel | `category` |
-| 22 | Child/CatRel | `category` |
-| 23 | Parent/AttrRel | `attribute` |
-| 24 | Child/AttrRel | `attribute` |
-| 25 | Parent/ClassRel | `class` |
-| 26 | Child/ClassRel | `class` |
-| 27 | Parent/InstRel | `instance` |
-| 28 | Child/InstRel | `instance` |
-| 29 | Class | `class` |
-| 30 | Instance | `instance` |
-
-### Environment relationships table write policy
-
-The environment relationships table is written at bootstrap and continues to be written at runtime as the knowledge base grows:
-
-- **Bootstrap**: all 29 compositional arc pairs for the category/attribute scaffold
-- **Runtime — new attribute**: `graphdb_attr` writes a parent→child arc pair placing the new attribute node in its correct position in the attribute library tree
-- **Runtime — new class**: `graphdb_class:create_class/2` writes a parent→child arc pair in the class taxonomy
-- **Runtime — new language**: similarly writes compositional arcs under the Languages category
-
-Project databases **never** write to the environment relationships table. All instance-level arcs, including class-membership pairs, are written to the project database only.
+The `Projects` category node is the organisational anchor for known
+projects. Public projects appear as child nodes whose presence is a
+discovery hint — at runtime each is overlaid by the actual project
+database root. Private projects are not listed; access requires
+out-of-band credentials. Listing is independent of project existence.
 
 ---
 
-## 7. nref Layer Changes
+## 7. nref Allocation
 
-### Environment database allocator
+### Ontology allocator
 
-The environment allocator (`nref_server` / `nref_allocator`) is started by the `nref`
-OTP application. Its DETS counter is initialised from disk on startup (defaulting to 1 on
-a fresh node). `graphdb_bootstrap` calls `nref_server:set_floor(10000)` as the first step
-of a bootstrap load, advancing the counter to 10000 and persisting it. On all subsequent
-startups the persisted counter is already ≥ 10000, so `set_floor` has no effect.
+Single global allocator served by `nref_server` / `nref_allocator`,
+DETS-backed. Counter starts at 1 on a fresh node. `graphdb_bootstrap`
+calls `nref_server:set_floor(10000)` once during the first scaffold
+load, advancing the counter past the bootstrap range. All subsequent
+ontology runtime nrefs are ≥ 10000.
 
-### Project database allocators
+### Project allocators
 
-Each project database manages its own nref counter independently. Project allocators
-**start at 1** — there are no pre-assigned bootstrap nrefs in a project database, so no
-floor is needed. The `nref` application as currently designed serves the environment
-database. Project nref allocation is a separate concern to be designed when the
-project-database layer is implemented; the simplest approach is a per-project DETS file
-holding the counter, mirroring the environment allocator's design.
+Per-project; start at **1**; no bootstrap floor. The project allocator
+layer is not yet implemented — when added, the simplest design mirrors
+the ontology allocator with a per-project DETS file. Numerical nref
+overlap with the ontology is not a problem because every lookup is
+routed to a specific database (see §6 cross-database resolution).
 
-### `nref_server` — new `set_floor/1` API
+---
 
-One new public function has been added to the environment allocator (Task 0b — **done**),
-called once by `graphdb_bootstrap`:
+## 8. Bootstrap
+
+### Configuration
+
+Single authoritative config: `apps/seerstone/priv/default.config`.
 
 ```erlang
-%% Advance the nref counter to at least Floor.
-%% No-op if the counter is already >= Floor.
-%% Called once by graphdb_bootstrap before writing any nodes or relationships.
-nref_server:set_floor(Floor :: integer()) -> ok.
+[{seerstone_graph_db, [
+   {app_port,       8080},
+   {log_path,       "log"},
+   {data_path,      "data"},
+   {bootstrap_file, "apps/graphdb/priv/bootstrap.terms"}
+ ]},
+ {mnesia, [{dir, "data"}]}].
 ```
 
-This atomically sets the DETS counter to `max(current_counter, Floor)`, ensuring the
-environment allocator never issues any nref in the bootstrap range 1–9999.
+Relative paths resolve from the OTP release root; absolute paths take
+effect as-is. Mnesia reads `dir` from its own application env — no code
+sets it.
 
----
+### Bootstrap file format
 
-## 8. Bootstrap Init File  *(environment database only)*
-
-### Format: Erlang Terms via `file:consult/1`
-
-| Format | Decision | Reason |
-|---|---|---|
-| **Erlang Terms** | **Selected** | Zero new dependencies; already used in project; `%` comments; pattern-matched directly |
-| JSON | Rejected | Requires external library |
-| Custom DSL | Rejected | Parser maintenance burden |
-| XML | Rejected | Too verbose; requires a parser |
-
-### Record schema
+Erlang terms via `file:consult/1`. Three term shapes (full schema in
+`graphdb_bootstrap.erl`):
 
 ```erlang
-%% Floor directive — must appear exactly once; processed FIRST by the loader:
 {nref_start, N}.
-%%
-%%   N :: integer()  — calls nref_server:set_floor(N) before any other processing
-%%                     so subsequent get_nref/0 calls (for relationship IDs) return >= N.
-%%                     All pre-assigned node nrefs in the file must be < N.
-
-%% Node record:
-{node, Nref, Kind, ParentNref, {NameAttrNref, NameValue}, [{AttrNref, Value}]}.
-%%
-%%   Nref         :: integer()              — pre-assigned nref for this node
-%%   Kind         :: category | attribute | class | instance
-%%   ParentNref   :: integer() | undefined  — undefined for root (nref=1) only
-%%   NameAttrNref :: integer()              — nref of the name attribute concept
-%%   NameValue    :: string() | binary()    — the node's name
-%%   [{AttrNref, Value}] :: shorthand; loader expands to #{attribute => AttrNref, value => Value}
-
-%% Bidirectional relationship record — loader writes two relationship rows atomically:
-{relationship, Node1Nref, Rel1Nref, [Node1AVPs], Rel2Nref, Node2Nref, [Node2AVPs]}.
-%%
-%%   Node1Nref :: integer()   — nref of first node (arc origin)
-%%   Rel1Nref  :: integer()   — arc label from Node1 → Node2
-%%   Node1AVPs :: list()      — per-direction metadata on the Node1 side
-%%   Rel2Nref  :: integer()   — reciprocal arc label from Node2 → Node1
-%%   Node2Nref :: integer()   — nref of second node (arc target)
-%%   Node2AVPs :: list()      — per-direction metadata on the Node2 side
+{node, Nref, Kind, ParentNref, {NameAttrNref, NameValue}, ExtraAVPs}.
+{relationship, N1, R1, AVPs1, R2, N2, AVPs2}.
 ```
 
-### Processing order
+Erlang Terms chosen over JSON / XML / custom DSL for zero added
+dependencies and direct pattern matching.
 
-The loader processes the file in this section order:
+### Loader
 
-1. `nref_start` directive — `nref_server:set_floor(N)` called **first**; subsequent `get_nref/0` calls for relationship IDs return `>= N`, avoiding collision with pre-assigned node nrefs
-2. `category` nodes
-3. `attribute` nodes
-4. `class` nodes
-5. `instance` nodes
-6. `relationship` records — each gets an ID via `nref_server:get_nref()`; expands to two directed rows written atomically
+`graphdb_bootstrap:load/0` is idempotent: creates Mnesia schema and
+tables if absent, loads scaffold only if `nodes` is empty. Called from
+`graphdb_mgr:init/1`. Processing order: floor directive → category
+nodes → attribute nodes → class nodes → instance nodes →
+relationships. Relationship IDs are allocated outside the Mnesia
+transaction to avoid retry side-effects.
 
-### File location
-
-Configurable via `bootstrap_file` key in `default.config`. Default value:
-`"apps/graphdb/priv/bootstrap.terms"`
-
-### File
-
-`apps/graphdb/priv/bootstrap.terms` — fully written; contains all 30 nodes (nrefs 1–30) and 29 relationship pairs (27 compositional + 2 membership). See that file for the authoritative content.
+`category` writes are permitted only inside `graphdb_bootstrap`. After
+the loader finishes, `graphdb_mgr` rejects any runtime request to
+create, modify, or delete a `category` node.
 
 ---
 
-## 9. New Module: `graphdb_bootstrap` — **DONE**
+## 9. Inheritance Resolution
 
-File: `apps/graphdb/src/graphdb_bootstrap.erl`
+`graphdb_instance:resolve_value/2` implements the four-level priority
+order from [`the-knowledge-network.md`](the-knowledge-network.md) §6:
 
-### Responsibilities (all implemented)
+1. **Local AVPs** on the instance — highest.
+2. **Class-bound values** — values explicitly bound at the class.
+3. **Compositional ancestors** — unbroken upward walk via `node.parent`.
+4. **Directly connected nodes** — one level deep — lowest.
 
-1. Called from `graphdb_mgr:init/1` — `load/0` is idempotent (creates tables if needed, skips if already populated)
-2. Reads `bootstrap_file` path from application env
-3. Calls `file:consult/1`, validates all terms
-4. Validates that exactly one `{nref_start, N}` directive is present and all node nrefs are `< N`
-5. Calls `nref_server:set_floor(N)` **first** — subsequent `get_nref/0` calls return `>= N`
-6. Writes nodes to Mnesia in section order: `category` → `attribute` → `class` → `instance`
-7. Expands each `{relationship,...}` term into two directed `relationship` records; each gets an ID via `get_nref()`; writes both rows atomically
-8. Logs progress and any validation errors
+Each level is consulted only if higher levels returned `not_found`.
 
-### Implementation notes
-
-- Mnesia table names are plural (`nodes`, `relationships`); record names are singular (`node`, `relationship`). Uses `{record_name, ...}` table option; all operations use `mnesia:write/3` (explicit 3-arg form).
-- nref IDs for relationships are allocated outside Mnesia transactions to avoid side-effects on retry.
-
-### Category-only enforcement
-
-After bootstrap completes, `graphdb_mgr` enforces that no runtime call can create, update,
-or delete a `category` node. Any such attempt returns `{error, category_nodes_are_immutable}`.
-
-### Public API
-
-```erlang
-%% Called by graphdb_mgr:init/1:
-graphdb_bootstrap:load() -> ok | {error, Reason :: term()}.
-```
+The current implementation has known correctness gaps documented in
+`TASKS-HIGH.md`: Priority 2 does not walk the class taxonomy (H4),
+Priority 4 does not exclude already-walked hierarchical arcs (H5), and
+multi-class membership is silently disambiguated by Mnesia ordering
+(H3).
 
 ---
 
-## 10. Open Questions
+## 10. Open Architectural Questions
 
-All questions resolved. No blockers for implementation.
+Pending architectural decisions and required additions. Each item has a
+detailed task in the severity-grouped task files.
 
-| Question | Answer |
-|---|---|
-| Path format for `log_path`, `data_path`, `bootstrap_file` | Both relative and absolute accepted; relative resolved from OTP release root |
-| Who sets Mnesia `dir`? | Set directly in `default.config` under `{mnesia, [{dir, "data"}]}` — no code needed |
-| `nref_start` placement | Directive `{nref_start, 10000}` in `bootstrap.terms` — not in config; one-time value belongs with the bootstrap data |
-| Stale DETS files | Deleted (`graphdb_attr.dets`, `graphdb_attr_index.dets`, `graphdb_attr_types.dets`) |
-| Bootstrap file content | **Done** — `apps/graphdb/priv/bootstrap.terms` written; nrefs 1–30, BFS |
+### Pending schema additions
 
----
+| Field | Purpose | Spec reference |
+|---|---|---|
+| `relationship.template_nref` | Template context for ASSOCIATE connections — part of connection identity | §5, §7 — `TASKS-CRITICAL.md` C1 |
+| `relationship.kind` | Explicit type: `taxonomy \| composition \| connection \| instantiation` | §5 — `TASKS-CRITICAL.md` C2 |
 
-## 11. Files Affected
+Both must land before any database ships with live data — schema
+migration on populated Mnesia tables is otherwise required.
 
-```
-SeerStoneGraphDb/
-├── apps/seerstone/priv/
-│   └── default.config               DONE — added log_path, bootstrap_file, mnesia dir; removed index_path
-├── apps/nref/src/
-│   ├── nref_allocator.erl           DONE — set_floor/1 added
-│   └── nref_server.erl              DONE — set_floor/1 added
-├── apps/graphdb/src/
-│   ├── graphdb_mgr.erl              CHANGE — bootstrap detection in init/1; call graphdb_bootstrap:load()
-│   ├── graphdb_attr.erl             IMPLEMENT — attribute library over Mnesia
-│   ├── graphdb_class.erl            IMPLEMENT — taxonomic hierarchy over Mnesia
-│   ├── graphdb_instance.erl         IMPLEMENT — compositional hierarchy + inheritance over Mnesia
-│   ├── graphdb_rules.erl            IMPLEMENT — rule storage and enforcement
-│   ├── graphdb_language.erl         IMPLEMENT — query parser and executor
-│   └── graphdb_bootstrap.erl        DONE — bootstrap file loader + Mnesia schema/table creation
-└── apps/graphdb/priv/
-    └── bootstrap.terms              DONE — 30 nodes (nrefs 1–30), 29 relationship pairs (27 compositional + 2 membership)
-```
+### Multi-inheritance representation
 
----
+The spec (§5) requires multiple class inheritance and multiple instance
+class membership. The current representation puts the single primary
+parent in `node.parent`; additional parents must live in the
+relationships table only. The `graphdb_class` ancestor walk and
+`graphdb_instance.resolve_from_class` need to traverse via arcs rather
+than the single parent field. See `TASKS-HIGH.md` H1, H2, H3.
 
-## 12. Implementation Order
+### Templates
 
-1. ~~`default.config` — add `log_path`, `bootstrap_file`, `mnesia dir` keys~~ — **done**
-2. ~~`nref_server` / `nref_allocator` — add `set_floor/1` API~~ — **done**
-3. ~~Delete stale `.dets` files~~ — **done**
-3a. ~~`apps/graphdb/priv/bootstrap.terms`~~ — **done** (nrefs 1–30, BFS)
-4. ~~`graphdb_bootstrap`~~ — **done** implement loader; includes Mnesia schema/table creation~~ — **done**
-5. ~~`graphdb_mgr`~~ — **done** bootstrap detection in `init/1`; read `bootstrap_file` from env; call loader ← **next**
-7. ~~`graphdb_attr` — implement attribute library (Mnesia-backed)
-8. ~~`graphdb_class` — implement taxonomic hierarchy (Mnesia-backed)~~ — **done**
-9. ~~`graphdb_instance` — implement compositional hierarchy + inheritance (Mnesia-backed)~~ — **done**
-10. `graphdb_mgr` — route public API calls to workers
-11. `graphdb_rules` — rule storage and enforcement
-12. `graphdb_language` — query parser and executor
+Templates (spec §7) are active concept nodes that scope connections.
+Representation choice is open — 5th node `kind = template`, or
+`kind = class` with `is_template = true` AVP. Required for §13 query
+filtering and §11 connection-pattern learning. See `TASKS-MEDIUM.md`
+M7.
 
+### Multilingual storage
+
+Names are currently raw Erlang strings on every node. Spec §15 requires
+language-neutral concept storage with per-language labels resolved at
+render time. Two design options (per-language map AVPs vs. label
+nodes) are open; choice affects every node in the database. See
+`TASKS-MEDIUM.md` M6.
+
+### Composition: dual storage
+
+`node.parent` and the 27/28 arc rows both encode the compositional
+parent. There is no formal invariant that they stay synchronised. The
+arcs are needed for graph queries; the field provides O(1) index
+lookup. Either declare the field a denormalised cache (and assert the
+invariant in tests), or remove it and use the relationship index.
+Decision pending. See `TASKS-MEDIUM.md` M1.
