@@ -137,6 +137,12 @@ A **template** is a named semantic context defined on a class in the ontology. I
 
 The same class may have multiple templates. A Star, for example, has a spectroscopic template (spectral class, luminosity, characteristic wavelengths), an astrometric template (position, distance, proper motion, parallax), and a photometric template (apparent magnitude, color index, variability). Each is a different engagement with the same concept. Viewing a star through its spectroscopic template and through its astrometric template produces different projections of the same underlying knowledge — not different data, and never inconsistent with each other.
 
+**Templates as compositional children.** A template is a compositional child of the class it scopes. The class owns its templates; the same template node is not shared across classes. Templates of a class are reached by ordinary compositional traversal of the class subtree.
+
+**Default template at class creation.** Every class is born with one template, conventionally named `default`, automatically attached as its first compositional child. The default template imposes no additional scoping — it represents the everyday context of the class, with no further disambiguation. This guarantees that connections involving instances of any newly-defined class can be made immediately, without forcing the ontology author to declare semantic disambiguations before the system is usable.
+
+**Forced disambiguation.** A class author who wants to require explicit semantic context for connections involving that class can delete the default template. With no default present, instances of that class can only participate in connections under an explicitly-named template, and the ontology author thereby enforces "you must say which context you mean."
+
 The connection-scoping role of templates is architecturally load-bearing. When two instances are connected through a template, that template context becomes part of the connection's identity. The connection knows not just *what* is connected to *what*, but *in what context* that connection exists and what it means. This is what makes it possible to have multiple semantically distinct connection types between the same pair of concepts without conflation.
 
 Templates are the mechanism through which the "derive any document" capability works: a different template over the same knowledge produces a different projection — a different document, always consistent with all others because the knowledge underneath is independent of documents and templates.
