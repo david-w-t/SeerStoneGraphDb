@@ -15,14 +15,14 @@ application:start(nref).
 
 ## Files
 
-| File | Description |
-|---|---|
-| `nref.erl` | OTP `application` behaviour callback — starts `nref_sup` |
-| `nref_sup.erl` | OTP `supervisor` callback — supervises allocator and servers |
-| `nref_allocator.erl` | Block-level nref allocator backed by DETS |
-| `nref_server.erl` | Per-request nref server; client of `nref_allocator` |
+| File                   | Description                                                                                |
+| ---------------------- | ------------------------------------------------------------------------------------------ |
+| `nref.erl`             | OTP `application` behaviour callback — starts `nref_sup`                                   |
+| `nref_sup.erl`         | OTP `supervisor` callback — supervises allocator and servers                               |
+| `nref_allocator.erl`   | Block-level nref allocator backed by DETS                                                  |
+| `nref_server.erl`      | Per-request nref server; client of `nref_allocator`                                        |
 | ~~`nref_include.erl`~~ | Deleted — was Dallas's earlier unsupervised predecessor to `nref_server`; fully superseded |
-| `nref_allocator.dets` | Persistent DETS storage for allocator state |
+| `nref_allocator.dets`  | Persistent DETS storage for allocator state                                                |
 
 ## Architecture
 
@@ -39,13 +39,13 @@ nref (application)
 
 The DETS file stores these keys:
 
-| Key | Type | Description |
-|---|---|---|
-| `block_size` | `integer()` | Number of nrefs per allocated block (default: 500) |
-| `free` | `integer()` | Next nref available for fresh allocation |
-| `reuse` | `[Count \| Nrefs]` | List with count prefix: nrefs available for reuse |
-| `confirm` | `[Nref]` | Nrefs allocated but not yet confirmed as used |
-| `allocated` | `[{Start, End}]` | Outstanding allocated blocks awaiting confirmation |
+| Key          | Type               | Description                                        |
+| ------------ | ------------------ | -------------------------------------------------- |
+| `block_size` | `integer()`        | Number of nrefs per allocated block (default: 500) |
+| `free`       | `integer()`        | Next nref available for fresh allocation           |
+| `reuse`      | `[Count \| Nrefs]` | List with count prefix: nrefs available for reuse  |
+| `confirm`    | `[Nref]`           | Nrefs allocated but not yet confirmed as used      |
+| `allocated`  | `[{Start, End}]`   | Outstanding allocated blocks awaiting confirmation |
 
 ### Key API
 
@@ -86,8 +86,8 @@ persisted DETS counter is already ≥ 10000 and the call is a no-op.
 
 - **`nref_server:set_floor/1`** — not yet implemented. Required by `graphdb_bootstrap` (Task 0b).
 - **`nref.erl` callbacks** (`start_phase/3`, `prep_stop/1`, `stop/1`, `config_change/3`) return `ok` (no-op stubs; correct for current deployment model).
-- **`nref:start/2` non-normal clauses**: `?NYI` for `{takeover, Node}` and `{failover, Node}`. Only relevant in distributed/failover deployments. See `TASKS.md` task L1.
-- **`code_change/3`**: NYI in `nref_allocator.erl` and `nref_server.erl`. Only invoked during hot code upgrades. See `TASKS.md` task L2.
+- **`nref:start/2` non-normal clauses**: `?NYI` for `{takeover, Node}` and `{failover, Node}`. Only relevant in distributed/failover deployments. See `TASKS-LOW.md` E2.
+- **`code_change/3`**: NYI in `nref_allocator.erl` and `nref_server.erl`. Only invoked during hot code upgrades. See `TASKS-LOW.md` E3.
 
 ## DETS File Location
 

@@ -6,9 +6,9 @@
 
 ## Files
 
-| File | Description |
-|---|---|
-| `database.erl` | OTP `application` behaviour callback module |
+| File               | Description                                                     |
+| ------------------ | --------------------------------------------------------------- |
+| `database.erl`     | OTP `application` behaviour callback module                     |
 | `database_sup.erl` | OTP `supervisor` — supervises graphdb and dictionary subsystems |
 
 ## Application Lifecycle
@@ -62,6 +62,7 @@ erlc apps/database/src/database_sup.erl apps/database/src/database.erl
 
 ## Remaining Work
 
-See `apps/graphdb/CLAUDE.md` and `TASKS.md` for the graphdb worker implementation
-work (Tasks 0–7) and `dictionary_server`/`term_server` wiring (Task 8) that must
-complete before this application is fully functional.
+See `apps/graphdb/CLAUDE.md` and the severity-grouped task files
+(`TASKS-CRITICAL.md`, `TASKS-HIGH.md`, `TASKS-MEDIUM.md`, `TASKS-LOW.md`) at
+the project root for the remaining graphdb work and `dictionary_server` /
+`term_server` wiring (Task 7 in `TASKS-LOW.md`).

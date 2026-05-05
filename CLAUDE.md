@@ -34,8 +34,11 @@ SeerStoneGraphDb/
 ├── rebar.config       # rebar3 umbrella build configuration
 ├── rebar.lock         # Locked dependency versions
 ├── Makefile           # Convenience targets (compile, shell, release, clean, rebar3)
-├── ARCHITECTURE.md    # Full architectural design (all decisions resolved)
-├── TASKS.md           # Inventory of remaining implementation work
+├── ARCHITECTURE.md    # High-level architecture; kept current with the code
+├── TASKS-CRITICAL.md  # Schema-level tasks (must land before live data)
+├── TASKS-HIGH.md      # Inheritance/membership correctness bugs
+├── TASKS-MEDIUM.md    # Semantic departures + query language + rules engine
+├── TASKS-LOW.md       # Polish, perf, OTP plumbing, dictionary wiring
 └── CLAUDE.md          # This file
 ```
 
@@ -110,29 +113,29 @@ Maintain this structure when adding new modules.
 ## Knowledge Model
 
 This database is an implementation of the knowledge graph model described in
-`knowledge-graph-database-guide.md` (sourced from US patents 5,379,366;
+`the-knowledge-network.md` (sourced from US patents 5,379,366;
 5,594,837; 5,878,406 — Noyes; and Cogito knowledge center documentation).
 
 ### Core Concepts
 
-| Concept                     | Erlang mapping                                                                                   |
-|-----------------------------|--------------------------------------------------------------------------------------------------|
-| **Node / Concept**          | A record identified by an Nref (positive integer); `kind` is one of `category \| attribute \| class \| instance` |
+| Concept                     | Erlang mapping                                                                                                                                               |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Node / Concept**          | A record identified by an Nref (positive integer); `kind` is one of `category \| attribute \| class \| instance`                                             |
 | **Category Node**           | Permanent top-level organisational scaffold; forms the skeleton of the entire graph; **bootstrap-only** — cannot be created, modified, or deleted at runtime |
-| **Instance Node**           | Concrete entity: has a name attribute, class membership, compositional parent, and relationships |
-| **Class Node**              | Type/schema: has a class name attribute, instance name attribute, and qualifying characteristics |
-| **Attribute Node**          | Name attribute, relationship attribute, or literal attribute stored in the attribute library     |
-| **Relationship (Arc)**      | Reciprocal connection between nodes; stored as two directed rows in the `relationships` Mnesia table |
-| **Reference Number (Nref)** | Globally unique `integer()` allocated by `nref_server:get_nref/0`; bootstrap nrefs are pre-assigned (all `< nref_start`) |
+| **Instance Node**           | Concrete entity: has a name attribute, class membership, compositional parent, and relationships                                                             |
+| **Class Node**              | Type/schema: has a class name attribute, instance name attribute, and qualifying characteristics                                                             |
+| **Attribute Node**          | Name attribute, relationship attribute, or literal attribute stored in the attribute library                                                                 |
+| **Relationship (Arc)**      | Reciprocal connection between nodes; stored as two directed rows in the `relationships` Mnesia table                                                         |
+| **Reference Number (Nref)** | Globally unique `integer()` allocated by `nref_server:get_nref/0`; bootstrap nrefs are pre-assigned (all `< nref_start`)                                     |
 
 ### Multi-Database Architecture
 
 Two database roles:
 
-| Role | Content | Mutability |
-|---|---|---|
-| **Environment database** | All category, attribute, class, and language nodes; bootstrap scaffold; arc label definitions | Category nodes: immutable (bootstrap-only). All other nodes grow freely at runtime. |
-| **Project database** | Instance nodes and their relationships; one database per project | Fully mutable at runtime |
+| Role                         | Content                                                                                       | Mutability                                                                          |
+| ---------------------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| **Ontology**                 | All category, attribute, class, and language nodes; bootstrap scaffold; arc label definitions | Category nodes: immutable (bootstrap-only). All other nodes grow freely at runtime. |
+| **Project (instance space)** | Instance nodes and their relationships; one database per project                              | Fully mutable at runtime                                                            |
 
 The environment is shared across all projects. Only bootstrap nrefs (1–30) and a small number of explicitly seeded runtime nrefs (e.g., `target_kind`) are referenced by nref constant in code — all other runtime-added nodes are treated generically.
 
@@ -234,31 +237,34 @@ A logical bidirectional edge is two `relationship` rows written atomically (one 
 
 ### graphdb Worker Responsibilities
 
-| Module             | Knowledge model role                                                                           |
-|--------------------|------------------------------------------------------------------------------------------------|
+| Module             | Knowledge model role                                                                                                                                                                                                                                                    |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `graphdb_attr`     | Maintains the attribute library (name attributes, literal attributes, relationship attributes, relationship types); literal attributes used as relationship arc metadata are identified by carrying a `relationship_avp => true` AVP on their own attribute node record |
-| `graphdb_class`    | Manages the taxonomic hierarchy: class nodes, qualifying characteristics, inheritance          |
-| `graphdb_instance` | Creates and retrieves instance nodes; manages compositional hierarchy                          |
-| `graphdb_rules`    | Stores and enforces graph rules (pattern recognition, relationship constraints)                |
-| `graphdb_language` | Parses and executes graph queries against the node network                                     |
-| `graphdb_mgr`      | Primary coordinator: routes operations across the other five workers                           |
+| `graphdb_class`    | Manages the taxonomic hierarchy: class nodes, qualifying characteristics, inheritance                                                                                                                                                                                   |
+| `graphdb_instance` | Creates and retrieves instance nodes; manages compositional hierarchy                                                                                                                                                                                                   |
+| `graphdb_rules`    | Stores and enforces graph rules (pattern recognition, relationship constraints)                                                                                                                                                                                         |
+| `graphdb_language` | Parses and executes graph queries against the node network                                                                                                                                                                                                              |
+| `graphdb_mgr`      | Primary coordinator: routes operations across the other five workers                                                                                                                                                                                                    |
 
 ## Known Incomplete Areas (NYI)
 
 These are outstanding items — all previously known bugs have been fixed.
 
-- **graphdb worker modules** — `graphdb_language` remains as a gen_server stub; `graphdb_rules` is a stub deferred to Enhancements
-- **`graphdb_mgr` write operations** — `create_attribute/3`, `create_class/2`, `create_instance/3`, `add_relationship/4`, `delete_node/1`, `update_node_avps/2` return `{error, not_implemented}` pending worker implementation (Tasks 3–5); read operations and category guard are fully functional
-- **`dictionary_server` and `term_server`** — stubs not yet wired to `dictionary_imp` (Task 7)
-- **`seerstone:start/2` and `nref:start/2`**, **`code_change/3`** — deferred to Enhancements (E2, E3 in TASKS.md)
+- **graphdb worker modules** — `graphdb_language` is a gen_server stub (TASKS-MEDIUM Task 6); `graphdb_rules` is a stub (TASKS-MEDIUM E1)
+- **`graphdb_mgr` write operations** — `create_attribute/3`, `create_class/2`, `create_instance/3`, `add_relationship/4`, `delete_node/1`, `update_node_avps/2` return `{error, not_implemented}` pending L4 routing work
+- **`dictionary_server` and `term_server`** — stubs not yet wired to `dictionary_imp` (TASKS-LOW Task 7)
+- **`seerstone:start/2` and `nref:start/2`**, **`code_change/3`** — deferred (TASKS-LOW E2, E3)
 - **App lifecycle callbacks** — `start_phase/3`, `prep_stop/1`, `stop/1`, `config_change/3` return `ok` (no-op) across all five app modules; correct for current deployment model
 
 ## Remaining Work
 
-Tasks 0a–0c and Tasks 1–5 are complete. Two implementation tasks remain:
-Task 6 (`graphdb_language` — query language) and Task 7 (wire `dictionary_server` / `term_server`
-to `dictionary_imp`). `graphdb_rules` is deferred to the Enhancements section of TASKS.md.
-See `TASKS.md` for the full task list and priority order.
+Remaining tasks are organised by severity in four files: `TASKS-CRITICAL.md`,
+`TASKS-HIGH.md`, `TASKS-MEDIUM.md`, `TASKS-LOW.md`. Critical items are
+schema-level departures from `the-knowledge-network.md` and should land
+before any database ships with live data. High items are correctness bugs
+in inheritance and class membership. Medium covers semantic gaps plus the
+query language (Task 6) and rules engine (E1). Low covers polish,
+performance, OTP plumbing, and dictionary wiring (Task 7).
 
 ## Configuration
 
@@ -291,11 +297,36 @@ GitHub Actions workflow at `.github/workflows/ci.yml`:
 - Development branch: `develop`
 - Feature work goes on `develop`; PRs target `main`
 
+## Documentation
+
+`ARCHITECTURE.md` must reflect the current high-level shape of the code.
+Keep it current — but at architectural altitude, not implementation
+detail.
+
+**Update `ARCHITECTURE.md` when:**
+- The Mnesia schema changes (record fields added/removed/renamed).
+- The OTP supervision tree changes (new/removed workers, supervisor
+  reorganisation).
+- A worker's public API contract changes meaningfully (signatures,
+  return shapes, ownership boundaries).
+- A new module is added or an existing one is removed.
+- An architectural decision is made or revised (storage technology,
+  cross-module routing, identity/allocation strategy).
+
+**Don't update `ARCHITECTURE.md` for:**
+- Internal refactors that don't change the contract.
+- Bug fixes, style changes, comment edits, test additions.
+- Implementation progress within an already-described component.
+
+The canonical spec is `the-knowledge-network.md` — it does **not** track
+the code. Outstanding work lives in `TASKS-CRITICAL.md`,
+`TASKS-HIGH.md`, `TASKS-MEDIUM.md`, and `TASKS-LOW.md`.
+
 ## Storage Technologies Used
 
-| Technology | Used by | Purpose |
-|---|---|---|
-| Mnesia | `graphdb_*` workers | Graph node and relationship storage; `disc_copies` for RAM-speed reads with persistence |
-| DETS | `nref_allocator`, `nref_server` | Persistent disk-based term storage |
-| ETS | `dictionary_imp` | In-memory term storage |
-| ETS tab2file | `dictionary_imp` | Persistent serialization of ETS tables |
+| Technology   | Used by                         | Purpose                                                                                 |
+| ------------ | ------------------------------- | --------------------------------------------------------------------------------------- |
+| Mnesia       | `graphdb_*` workers             | Graph node and relationship storage; `disc_copies` for RAM-speed reads with persistence |
+| DETS         | `nref_allocator`, `nref_server` | Persistent disk-based term storage                                                      |
+| ETS          | `dictionary_imp`                | In-memory term storage                                                                  |
+| ETS tab2file | `dictionary_imp`                | Persistent serialization of ETS tables                                                  |

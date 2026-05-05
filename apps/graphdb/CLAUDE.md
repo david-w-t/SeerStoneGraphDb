@@ -2,25 +2,24 @@
 
 ## Purpose
 
-`graphdb` is the core **graph database** OTP application within the SeerStone system. It is supervised by `database_sup` and itself manages graph data through `graphdb_sup` and six worker gen_servers. The data model is the knowledge graph described in `knowledge-graph-database-guide.md` (US patents 5,379,366; 5,594,837; 5,878,406 — Noyes).
+`graphdb` is the core **graph database** OTP application within the SeerStone system. It is supervised by `database_sup` and itself manages graph data through `graphdb_sup` and six worker gen_servers. The data model is the knowledge graph described in `the-knowledge-network.md` (US patents 5,379,366; 5,594,837; 5,878,406 — Noyes).
 
 ## Files
 
-| File                       | Description                                               |
-|----------------------------|-----------------------------------------------------------|
-| `graphdb.erl`              | OTP `application` behaviour callback module               |
-| `graphdb_sup.erl`          | OTP `supervisor` behaviour callback module                |
-| `graphdb_bootstrap.erl`    | Bootstrap file loader + Mnesia schema creator (implemented) |
-| `graphdb_mgr.erl`          | Primary coordinator gen_server (stub)                     |
-| `graphdb_rules.erl`        | Graph rules gen_server (stub)                             |
-| `graphdb_attr.erl`         | Attribute library gen_server (stub)                       |
-| `graphdb_class.erl`        | Taxonomic hierarchy gen_server (stub)                     |
-| `graphdb_instance.erl`     | Instance/compositional hierarchy gen_server (stub)        |
-| `graphdb_language.erl`     | Query language gen_server (stub)                          |
+| File                    | Description                                                 |
+| ----------------------- | ----------------------------------------------------------- |
+| `graphdb.erl`           | OTP `application` behaviour callback module                 |
+| `graphdb_sup.erl`       | OTP `supervisor` behaviour callback module                  |
+| `graphdb_bootstrap.erl` | Bootstrap file loader + Mnesia schema creator (implemented) |
+| `graphdb_mgr.erl`       | Primary coordinator gen_server (stub)                       |
+| `graphdb_rules.erl`     | Graph rules gen_server (stub)                               |
+| `graphdb_attr.erl`      | Attribute library gen_server (stub)                         |
+| `graphdb_class.erl`     | Taxonomic hierarchy gen_server (stub)                       |
+| `graphdb_instance.erl`  | Instance/compositional hierarchy gen_server (stub)          |
+| `graphdb_language.erl`  | Query language gen_server (stub)                            |
 
 `apps/graphdb/priv/bootstrap.terms` — Erlang Terms file fully written; contains 30 nodes
-(nrefs 1–30, BFS) and 29 compositional relationship pairs. Loaded at first environment
-database startup.
+(nrefs 1–30, BFS) and 29 compositional relationship pairs. Loaded at first ontology startup.
 
 ## Application Lifecycle
 
@@ -42,12 +41,12 @@ database_sup -> graphdb_sup:start_link(StartArgs) -> graphdb_sup:init/1
 
 Two database roles operate in parallel:
 
-| Role | Content | Mutability |
-|---|---|---|
-| **Environment database** | All category, attribute, class, and language nodes; bootstrap scaffold; arc label definitions | Category nodes: immutable (bootstrap-only). All other nodes grow freely at runtime. |
-| **Project database** | Instance nodes and their relationships; one per project | Fully mutable at runtime |
+| Role                         | Content                                                                                       | Mutability                                                                          |
+| ---------------------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| **Ontology**                 | All category, attribute, class, and language nodes; bootstrap scaffold; arc label definitions | Category nodes: immutable (bootstrap-only). All other nodes grow freely at runtime. |
+| **Project (instance space)** | Instance nodes and their relationships; one per project                                       | Fully mutable at runtime                                                            |
 
-The environment is shared across all projects and is a **living, growing database**: new literal attributes, relationship attributes, and classes are added over time. Only category nodes (nrefs 1–5) are permanently fixed.
+The ontology is shared across all projects and is a **living, growing database**: new literal attributes, relationship attributes, and classes are added over time. Only category nodes (nrefs 1–5) are permanently fixed.
 
 nref spaces:
 - **Environment**: bootstrap nrefs 1–30; runtime nrefs 10000+ (floor set by `{nref_start, 10000}` directive in `bootstrap.terms`)
@@ -63,12 +62,12 @@ The six workers collectively implement the knowledge graph model. Every node in 
 
 ### Node Types
 
-| Type                | Description                                                                                                                   | Creatable at runtime? |
-|---------------------|-------------------------------------------------------------------------------------------------------------------------------|-----------------------|
-| **Category Node**   | Permanent top-level organisational scaffold; forms the skeleton of the entire graph (nrefs 1–5)                               | **No — bootstrap only** |
-| **Attribute Node**  | Name or relationship label stored in the attribute library. Used as arc labels (`characterization`/`reciprocal`) in relationships | Yes |
-| **Class Node**      | Type/schema. Has a class name attribute, instance name attribute, and qualifying characteristics.                             | Yes |
-| **Instance Node**   | Concrete entity. Has a name attribute, class membership (taxonomic parent), compositional parent ("part of"), and relationships | Yes |
+| Type               | Description                                                                                                                       | Creatable at runtime?   |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
+| **Category Node**  | Permanent top-level organisational scaffold; forms the skeleton of the entire graph (nrefs 1–5)                                   | **No — bootstrap only** |
+| **Attribute Node** | Name or relationship label stored in the attribute library. Used as arc labels (`characterization`/`reciprocal`) in relationships | Yes                     |
+| **Class Node**     | Type/schema. Has a class name attribute, instance name attribute, and qualifying characteristics.                                 | Yes                     |
+| **Instance Node**  | Concrete entity. Has a name attribute, class membership (taxonomic parent), compositional parent ("part of"), and relationships   | Yes                     |
 
 `category` nodes cannot be created, modified, or deleted via any runtime API. `graphdb_mgr` rejects such attempts with `{error, category_nodes_are_immutable}`.
 
@@ -199,7 +198,7 @@ Loaded by `graphdb_mgr:init/1` when the Mnesia `nodes` table is empty (first sta
 ### `graphdb_attr` — Attribute Library
 
 Maintains all named attribute concepts used as arc labels. All attribute nodes live in
-the environment `nodes` Mnesia table with `kind = attribute`.
+the ontology `nodes` Mnesia table with `kind = attribute`.
 
 - `create_name_attribute/1` (name)
 - `create_literal_attribute/2` (name, type)
@@ -210,7 +209,7 @@ the environment `nodes` Mnesia table with `kind = attribute`.
 
 ### `graphdb_class` — Taxonomic Hierarchy
 
-Manages the "is a" hierarchy of class nodes in the environment database.
+Manages the "is a" hierarchy of class nodes in the ontology.
 
 - `create_class/2` (name, parent_class_nref)
 - `add_qualifying_characteristic/2` (class_nref, attribute_nref)
@@ -218,7 +217,7 @@ Manages the "is a" hierarchy of class nodes in the environment database.
 
 ### `graphdb_instance` — Instance & Compositional Hierarchy
 
-Creates and manages instance nodes in the project database.
+Creates and manages instance nodes in the project (instance space).
 
 - `create_instance/3` (name, class_nref, compositional_parent_nref) — atomically writes the node record AND the instance→class membership relationship pair (arc labels nref=29 and nref=30)
 - `add_relationship/4` (source_nref, characterization_nref, target_nref, reciprocal_nref) — writes two directed rows atomically; IDs allocated via `get_nref()`
@@ -262,8 +261,8 @@ All six worker modules (`graphdb_mgr`, `graphdb_rules`, `graphdb_attr`, `graphdb
 ## Key Design Notes
 
 - `graphdb_sup` receives `StartArgs` from `database:start/2`, unlike `seerstone_sup` which takes no args
-- Implement in dependency order: `graphdb_bootstrap` → `graphdb_mgr` (startup wiring) → `graphdb_attr` → `graphdb_class` → `graphdb_instance` → `graphdb_rules` → `graphdb_language` → `graphdb_mgr` (full routing). See `TASKS.md` for the detailed breakdown.
-- Consult `knowledge-graph-database-guide.md` for the full model spec before implementing
+- `graphdb_bootstrap`, `graphdb_mgr` (startup + read API), `graphdb_attr`, `graphdb_class`, and `graphdb_instance` are implemented. Remaining work is grouped by severity in `TASKS-CRITICAL.md`, `TASKS-HIGH.md`, `TASKS-MEDIUM.md`, and `TASKS-LOW.md` at the project root.
+- Consult `the-knowledge-network.md` for the full model spec before implementing
 
 ## Compile
 
@@ -277,5 +276,8 @@ erlc apps/graphdb/src/graphdb_sup.erl apps/graphdb/src/graphdb.erl
 
 ## Remaining Work
 
-`graphdb_bootstrap.erl` must be created and all six worker stubs implemented.
-See `TASKS.md` for the full task list and priority order.
+`graphdb_bootstrap.erl` is implemented; `graphdb_mgr`, `graphdb_attr`,
+`graphdb_class`, and `graphdb_instance` are implemented. Outstanding work
+(template support, multi-inheritance, query language, rules engine, etc.)
+is grouped by severity in `TASKS-CRITICAL.md`, `TASKS-HIGH.md`,
+`TASKS-MEDIUM.md`, and `TASKS-LOW.md` at the project root.
