@@ -73,6 +73,7 @@
 
 -record(relationship, {
 	id,						%% integer() — primary key (nref allocated normally)
+	kind,					%% taxonomy | composition | connection | instantiation
 	source_nref,			%% integer() — arc origin
 	characterization,		%% integer() — arc label (an attribute nref)
 	target_nref,			%% integer() — arc target
@@ -99,6 +100,7 @@
 		classify_terms/1,
 		sort_nodes_by_kind/1,
 		validate/2,
+		validate_relationships/1,
 		term_to_node/1,
 		expand_avps/1,
 		kind_order/1
@@ -227,6 +229,7 @@ do_load() ->
 		{ok, Terms} ->
 			{NrefStart, Nodes, Rels} = classify_terms(Terms),
 			ok = validate(NrefStart, Nodes),
+			ok = validate_relationships(Rels),
 			logger:info("graphdb_bootstrap: set_floor(~p)", [NrefStart]),
 			ok = nref_server:set_floor(NrefStart),
 			ok = write_nodes(Nodes),
@@ -272,7 +275,7 @@ classify_terms([{nref_start, _} | _Rest], _Already, _Nodes, _Rels) ->
 	throw({error, duplicate_nref_start});
 classify_terms([{node, _, _, _, _, _} = Node | Rest], NrefStart, Nodes, Rels) ->
 	classify_terms(Rest, NrefStart, [Node | Nodes], Rels);
-classify_terms([{relationship, _, _, _, _, _, _} = Rel | Rest], NrefStart, Nodes, Rels) ->
+classify_terms([{relationship, _, _, _, _, _, _, _} = Rel | Rest], NrefStart, Nodes, Rels) ->
 	classify_terms(Rest, NrefStart, Nodes, [Rel | Rels]);
 classify_terms([Unknown | _Rest], _NrefStart, _Nodes, _Rels) ->
 	throw({error, {unknown_term, Unknown}}).
@@ -319,6 +322,24 @@ validate(NrefStart, Nodes) ->
 			false -> throw({error, {nref_not_below_floor, Nref, NrefStart}})
 		end
 	end, Nodes),
+	ok.
+
+
+%%-----------------------------------------------------------------------------
+%% validate_relationships(Rels) -> ok
+%%
+%% Validates that every relationship term carries a legal Kind atom.
+%%-----------------------------------------------------------------------------
+validate_relationships(Rels) ->
+	lists:foreach(fun({relationship, _, _, _, _, _, _, Kind} = Rel) ->
+		case Kind of
+			taxonomy      -> ok;
+			composition   -> ok;
+			connection    -> ok;
+			instantiation -> ok;
+			_             -> throw({error, {invalid_relationship_kind, Kind, Rel}})
+		end
+	end, Rels),
 	ok.
 
 
@@ -378,17 +399,18 @@ write_relationships(Rels) ->
 %% expand_relationship(Term) -> {#relationship{}, #relationship{}}
 %%
 %% Allocates two nref IDs and expands a bidirectional relationship
-%% term into two directed rows.
+%% term into two directed rows.  Both rows share the same Kind.
 %%
-%% {relationship, N1, R1, AVPs1, R2, N2, AVPs2} expands to:
-%%   Row 1: source=N1, characterization=R1, target=N2, reciprocal=R2
-%%   Row 2: source=N2, characterization=R2, target=N1, reciprocal=R1
+%% {relationship, N1, R1, AVPs1, R2, N2, AVPs2, Kind} expands to:
+%%   Row 1: source=N1, characterization=R1, target=N2, reciprocal=R2, kind=Kind
+%%   Row 2: source=N2, characterization=R2, target=N1, reciprocal=R1, kind=Kind
 %%-----------------------------------------------------------------------------
-expand_relationship({relationship, N1, R1, AVPs1, R2, N2, AVPs2}) ->
+expand_relationship({relationship, N1, R1, AVPs1, R2, N2, AVPs2, Kind}) ->
 	Id1 = nref_server:get_nref(),
 	Id2 = nref_server:get_nref(),
 	Row1 = #relationship{
 		id = Id1,
+		kind = Kind,
 		source_nref = N1,
 		characterization = R1,
 		target_nref = N2,
@@ -397,6 +419,7 @@ expand_relationship({relationship, N1, R1, AVPs1, R2, N2, AVPs2}) ->
 	},
 	Row2 = #relationship{
 		id = Id2,
+		kind = Kind,
 		source_nref = N2,
 		characterization = R2,
 		target_nref = N1,

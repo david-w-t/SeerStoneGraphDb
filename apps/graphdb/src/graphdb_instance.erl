@@ -102,6 +102,7 @@
 
 -record(relationship, {
 	id,						%% integer() -- primary key
+	kind,					%% taxonomy | composition | connection | instantiation
 	source_nref,			%% integer() -- arc origin
 	characterization,		%% integer() -- arc label (an attribute nref)
 	target_nref,			%% integer() -- arc target
@@ -340,6 +341,7 @@ do_write_instance(Name, ClassNref, ParentNref) ->
 	%% Instance -> Class (char=29, reciprocal=30)
 	I2C = #relationship{
 		id = MembId1,
+		kind = instantiation,
 		source_nref = Nref,
 		characterization = ?CLASS_MEMBERSHIP_ARC,
 		target_nref = ClassNref,
@@ -349,6 +351,7 @@ do_write_instance(Name, ClassNref, ParentNref) ->
 	%% Class -> Instance (char=30, reciprocal=29)
 	C2I = #relationship{
 		id = MembId2,
+		kind = instantiation,
 		source_nref = ClassNref,
 		characterization = ?INSTANCE_MEMBERSHIP_ARC,
 		target_nref = Nref,
@@ -358,6 +361,7 @@ do_write_instance(Name, ClassNref, ParentNref) ->
 	%% Parent -> Child (char=28, reciprocal=27)
 	P2C = #relationship{
 		id = CompId1,
+		kind = composition,
 		source_nref = ParentNref,
 		characterization = ?INST_CHILD_ARC,
 		target_nref = Nref,
@@ -367,6 +371,7 @@ do_write_instance(Name, ClassNref, ParentNref) ->
 	%% Child -> Parent (char=27, reciprocal=28)
 	C2P = #relationship{
 		id = CompId2,
+		kind = composition,
 		source_nref = Nref,
 		characterization = ?INST_PARENT_ARC,
 		target_nref = ParentNref,
@@ -422,6 +427,7 @@ do_add_relationship(SourceNref, CharNref, TargetNref, ReciprocalNref) ->
 	Id2 = nref_server:get_nref(),
 	Fwd = #relationship{
 		id = Id1,
+		kind = connection,
 		source_nref = SourceNref,
 		characterization = CharNref,
 		target_nref = TargetNref,
@@ -430,6 +436,7 @@ do_add_relationship(SourceNref, CharNref, TargetNref, ReciprocalNref) ->
 	},
 	Rev = #relationship{
 		id = Id2,
+		kind = connection,
 		source_nref = TargetNref,
 		characterization = ReciprocalNref,
 		target_nref = SourceNref,

@@ -101,6 +101,7 @@
 
 -record(relationship, {
 	id,						%% integer() -- primary key
+	kind,					%% taxonomy | composition | connection | instantiation
 	source_nref,			%% integer() -- arc origin
 	characterization,		%% integer() -- arc label (an attribute nref)
 	target_nref,			%% integer() -- arc target
@@ -454,6 +455,7 @@ do_create_attribute(Name, ParentNref, ExtraAVPs) ->
 	Id2 = nref_server:get_nref(),
 	P2C = #relationship{
 		id = Id1,
+		kind = composition,
 		source_nref = ParentNref,
 		characterization = ?ATTR_CHILD_ARC,
 		target_nref = Nref,
@@ -462,6 +464,7 @@ do_create_attribute(Name, ParentNref, ExtraAVPs) ->
 	},
 	C2P = #relationship{
 		id = Id2,
+		kind = composition,
 		source_nref = Nref,
 		characterization = ?ATTR_PARENT_ARC,
 		target_nref = ParentNref,

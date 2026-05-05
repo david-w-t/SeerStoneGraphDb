@@ -34,6 +34,7 @@
 
 -record(relationship, {
 	id,
+	kind,
 	source_nref,
 	characterization,
 	target_nref,

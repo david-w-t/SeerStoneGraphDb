@@ -108,6 +108,7 @@
 
 -record(relationship, {
 	id,						%% integer() -- primary key
+	kind,					%% taxonomy | composition | connection | instantiation
 	source_nref,			%% integer() -- arc origin
 	characterization,		%% integer() -- arc label (an attribute nref)
 	target_nref,			%% integer() -- arc target
@@ -417,6 +418,7 @@ do_create_seed_attribute(Name) ->
 	Id2 = nref_server:get_nref(),
 	P2C = #relationship{
 		id = Id1,
+		kind = composition,
 		source_nref = ?PARENT_LITERALS,
 		characterization = ?ATTR_CHILD_ARC,
 		target_nref = Nref,
@@ -425,6 +427,7 @@ do_create_seed_attribute(Name) ->
 	},
 	C2P = #relationship{
 		id = Id2,
+		kind = composition,
 		source_nref = Nref,
 		characterization = ?ATTR_PARENT_ARC,
 		target_nref = ?PARENT_LITERALS,
@@ -448,8 +451,8 @@ do_create_seed_attribute(Name) ->
 %%
 %% Validates the parent, allocates an nref, builds the class node
 %% record with the name AVP, allocates two relationship ids for the
-%% compositional parent/child arc pair, and writes all three rows in
-%% a single Mnesia transaction.
+%% taxonomic parent/child (class IS-A class) arc pair, and writes
+%% all three rows in a single Mnesia transaction.
 %%-----------------------------------------------------------------------------
 do_create_class(Name, ParentClassNref) ->
 	case do_validate_parent(ParentClassNref) of
@@ -466,6 +469,7 @@ do_create_class(Name, ParentClassNref) ->
 			Id2 = nref_server:get_nref(),
 			P2C = #relationship{
 				id = Id1,
+				kind = taxonomy,
 				source_nref = ParentClassNref,
 				characterization = ?CLASS_CHILD_ARC,
 				target_nref = Nref,
@@ -474,6 +478,7 @@ do_create_class(Name, ParentClassNref) ->
 			},
 			C2P = #relationship{
 				id = Id2,
+				kind = taxonomy,
 				source_nref = Nref,
 				characterization = ?CLASS_PARENT_ARC,
 				target_nref = ParentClassNref,

@@ -77,6 +77,7 @@
 
 -record(relationship, {
 	id,						%% integer() -- primary key (nref allocated normally)
+	kind,					%% taxonomy | composition | connection | instantiation
 	source_nref,			%% integer() -- arc origin
 	characterization,		%% integer() -- arc label (an attribute nref)
 	target_nref,			%% integer() -- arc target

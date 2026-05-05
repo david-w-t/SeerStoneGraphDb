@@ -28,7 +28,7 @@ classify_terms_valid_test() ->
 		{nref_start, 100},
 		{node, 1, category, undefined, {17, "Root"}, []},
 		{node, 6, attribute, 2, {18, "Names"}, []},
-		{relationship, 1, 22, [], 21, 2, []}
+		{relationship, 1, 22, [], 21, 2, [], composition}
 	],
 	{NrefStart, Nodes, Rels} = graphdb_bootstrap:classify_terms(Terms),
 	?assertEqual(100, NrefStart),
@@ -48,16 +48,16 @@ classify_terms_sorts_by_kind_test() ->
 classify_terms_preserves_relationship_order_test() ->
 	Terms = [
 		{nref_start, 100},
-		{relationship, 1, 22, [], 21, 2, []},
-		{relationship, 1, 22, [], 21, 3, []},
-		{relationship, 2, 24, [], 23, 6, []}
+		{relationship, 1, 22, [], 21, 2, [], composition},
+		{relationship, 1, 22, [], 21, 3, [], composition},
+		{relationship, 2, 24, [], 23, 6, [], composition}
 	],
 	{_, _, Rels} = graphdb_bootstrap:classify_terms(Terms),
 	?assertEqual(3, length(Rels)),
 	%% File order preserved
-	{relationship, 1, 22, [], 21, 2, []} = lists:nth(1, Rels),
-	{relationship, 1, 22, [], 21, 3, []} = lists:nth(2, Rels),
-	{relationship, 2, 24, [], 23, 6, []} = lists:nth(3, Rels).
+	{relationship, 1, 22, [], 21, 2, [], composition} = lists:nth(1, Rels),
+	{relationship, 1, 22, [], 21, 3, [], composition} = lists:nth(2, Rels),
+	{relationship, 2, 24, [], 23, 6, [], composition} = lists:nth(3, Rels).
 
 classify_terms_missing_nref_start_test() ->
 	Terms = [{node, 1, category, undefined, {17, "Root"}, []}],
