@@ -66,7 +66,7 @@
 %%---------------------------------------------------------------------
 -record(node, {
 	nref,					%% integer() — primary key
-	kind,					%% category | attribute | class | instance
+	kind,					%% category | attribute | class | instance | template
 	parent,					%% integer() | undefined (undefined = root only)
 	attribute_value_pairs	%% [#{attribute => Nref, value => term()}]
 }).
@@ -284,7 +284,8 @@ classify_terms([Unknown | _Rest], _NrefStart, _Nodes, _Rels) ->
 %%-----------------------------------------------------------------------------
 %% sort_nodes_by_kind(Nodes) -> SortedNodes
 %%
-%% Sorts nodes by kind priority: category, attribute, class, instance.
+%% Sorts nodes by kind priority: category, attribute, class, instance,
+%% template.
 %% Within the same kind, preserves file order (stable sort).
 %%-----------------------------------------------------------------------------
 sort_nodes_by_kind(Nodes) ->
@@ -295,14 +296,15 @@ sort_nodes_by_kind(Nodes) ->
 kind_order(category)  -> 1;
 kind_order(attribute) -> 2;
 kind_order(class)     -> 3;
-kind_order(instance)  -> 4.
+kind_order(instance)  -> 4;
+kind_order(template)  -> 5.
 
 
 %%-----------------------------------------------------------------------------
 %% validate(NrefStart, Nodes) -> ok
 %%
 %% Validates that every node nref is a positive integer below NrefStart
-%% and every kind is one of the four legal atoms.
+%% and every kind is one of the five legal atoms.
 %%-----------------------------------------------------------------------------
 validate(NrefStart, Nodes) ->
 	lists:foreach(fun({node, Nref, Kind, _Parent, _Name, _AVPs}) ->
@@ -311,6 +313,7 @@ validate(NrefStart, Nodes) ->
 			attribute -> ok;
 			class     -> ok;
 			instance  -> ok;
+			template  -> ok;
 			_         -> throw({error, {invalid_kind, Nref, Kind}})
 		end,
 		case is_integer(Nref) andalso Nref > 0 of

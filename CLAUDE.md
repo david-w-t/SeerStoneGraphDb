@@ -120,7 +120,7 @@ This database is an implementation of the knowledge graph model described in
 
 | Concept                     | Erlang mapping                                                                                                                                               |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Node / Concept**          | A record identified by an Nref (positive integer); `kind` is one of `category \| attribute \| class \| instance`                                             |
+| **Node / Concept**          | A record identified by an Nref (positive integer); `kind` is one of `category \| attribute \| class \| instance \| template`                                 |
 | **Category Node**           | Permanent top-level organisational scaffold; forms the skeleton of the entire graph; **bootstrap-only** — cannot be created, modified, or deleted at runtime |
 | **Instance Node**           | Concrete entity: has a name attribute, class membership, compositional parent, and relationships                                                             |
 | **Class Node**              | Type/schema: has a class name attribute, instance name attribute, and qualifying characteristics                                                             |
@@ -211,7 +211,7 @@ Every graph node is stored as a Mnesia record:
 ```erlang
 -record(node, {
   nref,                   %% integer() — unique positive integer; primary key
-  kind,                   %% category | attribute | class | instance
+  kind,                   %% category | attribute | class | instance | template
   parent,                 %% integer() | undefined  (undefined = root node only)
   attribute_value_pairs   %% [#{attribute => AttrNref, value => Value}]
 }).

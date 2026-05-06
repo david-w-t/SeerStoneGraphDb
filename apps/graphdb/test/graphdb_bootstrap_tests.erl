@@ -159,11 +159,16 @@ kind_order_class_before_instance_test() ->
 	?assert(graphdb_bootstrap:kind_order(class) <
 		graphdb_bootstrap:kind_order(instance)).
 
+kind_order_instance_before_template_test() ->
+	?assert(graphdb_bootstrap:kind_order(instance) <
+		graphdb_bootstrap:kind_order(template)).
+
 kind_order_values_test() ->
 	?assertEqual(1, graphdb_bootstrap:kind_order(category)),
 	?assertEqual(2, graphdb_bootstrap:kind_order(attribute)),
 	?assertEqual(3, graphdb_bootstrap:kind_order(class)),
-	?assertEqual(4, graphdb_bootstrap:kind_order(instance)).
+	?assertEqual(4, graphdb_bootstrap:kind_order(instance)),
+	?assertEqual(5, graphdb_bootstrap:kind_order(template)).
 
 
 %%=============================================================================
@@ -177,6 +182,10 @@ validate_all_valid_test() ->
 		{node, 6, attribute, 2, {18, "Names"}, []},
 		{node, 99, instance, 6, {20, "Inst"}, []}
 	],
+	?assertEqual(ok, graphdb_bootstrap:validate(100, Nodes)).
+
+validate_template_kind_test() ->
+	Nodes = [{node, 50, template, 6, {19, "default"}, []}],
 	?assertEqual(ok, graphdb_bootstrap:validate(100, Nodes)).
 
 validate_empty_nodes_test() ->

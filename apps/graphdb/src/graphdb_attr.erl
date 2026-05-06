@@ -94,7 +94,7 @@
 %%---------------------------------------------------------------------
 -record(node, {
 	nref,					%% integer() -- primary key
-	kind,					%% category | attribute | class | instance
+	kind,					%% category | attribute | class | instance | template
 	parent,					%% integer() | undefined (undefined = root only)
 	attribute_value_pairs	%% [#{attribute => Nref, value => term()}]
 }).

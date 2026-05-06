@@ -113,7 +113,7 @@ Every graph node is stored as a Mnesia record:
 ```erlang
 -record(node, {
   nref,                   %% integer() — primary key
-  kind,                   %% category | attribute | class | instance
+  kind,                   %% category | attribute | class | instance | template
   parent,                 %% integer() | undefined  (undefined = root node only)
   attribute_value_pairs   %% [#{attribute => AttrNref, value => term()}]
 }).
