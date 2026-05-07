@@ -28,7 +28,7 @@ classify_terms_valid_test() ->
 		{nref_start, 100},
 		{node, 1, category, undefined, {17, "Root"}, []},
 		{node, 6, attribute, 2, {18, "Names"}, []},
-		{relationship, 1, 22, [], 21, 2, []}
+		{relationship, 1, 22, [], 21, 2, [], composition}
 	],
 	{NrefStart, Nodes, Rels} = graphdb_bootstrap:classify_terms(Terms),
 	?assertEqual(100, NrefStart),
@@ -48,16 +48,16 @@ classify_terms_sorts_by_kind_test() ->
 classify_terms_preserves_relationship_order_test() ->
 	Terms = [
 		{nref_start, 100},
-		{relationship, 1, 22, [], 21, 2, []},
-		{relationship, 1, 22, [], 21, 3, []},
-		{relationship, 2, 24, [], 23, 6, []}
+		{relationship, 1, 22, [], 21, 2, [], composition},
+		{relationship, 1, 22, [], 21, 3, [], composition},
+		{relationship, 2, 24, [], 23, 6, [], composition}
 	],
 	{_, _, Rels} = graphdb_bootstrap:classify_terms(Terms),
 	?assertEqual(3, length(Rels)),
 	%% File order preserved
-	{relationship, 1, 22, [], 21, 2, []} = lists:nth(1, Rels),
-	{relationship, 1, 22, [], 21, 3, []} = lists:nth(2, Rels),
-	{relationship, 2, 24, [], 23, 6, []} = lists:nth(3, Rels).
+	{relationship, 1, 22, [], 21, 2, [], composition} = lists:nth(1, Rels),
+	{relationship, 1, 22, [], 21, 3, [], composition} = lists:nth(2, Rels),
+	{relationship, 2, 24, [], 23, 6, [], composition} = lists:nth(3, Rels).
 
 classify_terms_missing_nref_start_test() ->
 	Terms = [{node, 1, category, undefined, {17, "Root"}, []}],
@@ -159,11 +159,16 @@ kind_order_class_before_instance_test() ->
 	?assert(graphdb_bootstrap:kind_order(class) <
 		graphdb_bootstrap:kind_order(instance)).
 
+kind_order_instance_before_template_test() ->
+	?assert(graphdb_bootstrap:kind_order(instance) <
+		graphdb_bootstrap:kind_order(template)).
+
 kind_order_values_test() ->
 	?assertEqual(1, graphdb_bootstrap:kind_order(category)),
 	?assertEqual(2, graphdb_bootstrap:kind_order(attribute)),
 	?assertEqual(3, graphdb_bootstrap:kind_order(class)),
-	?assertEqual(4, graphdb_bootstrap:kind_order(instance)).
+	?assertEqual(4, graphdb_bootstrap:kind_order(instance)),
+	?assertEqual(5, graphdb_bootstrap:kind_order(template)).
 
 
 %%=============================================================================
@@ -177,6 +182,10 @@ validate_all_valid_test() ->
 		{node, 6, attribute, 2, {18, "Names"}, []},
 		{node, 99, instance, 6, {20, "Inst"}, []}
 	],
+	?assertEqual(ok, graphdb_bootstrap:validate(100, Nodes)).
+
+validate_template_kind_test() ->
+	Nodes = [{node, 50, template, 6, {19, "default"}, []}],
 	?assertEqual(ok, graphdb_bootstrap:validate(100, Nodes)).
 
 validate_empty_nodes_test() ->

@@ -70,13 +70,14 @@
 %%---------------------------------------------------------------------
 -record(node, {
 	nref,					%% integer() -- primary key
-	kind,					%% category | attribute | class | instance
+	kind,					%% category | attribute | class | instance | template
 	parent,					%% integer() | undefined (undefined = root only)
 	attribute_value_pairs	%% [#{attribute => Nref, value => term()}]
 }).
 
 -record(relationship, {
 	id,						%% integer() -- primary key (nref allocated normally)
+	kind,					%% taxonomy | composition | connection | instantiation
 	source_nref,			%% integer() -- arc origin
 	characterization,		%% integer() -- arc label (an attribute nref)
 	target_nref,			%% integer() -- arc target

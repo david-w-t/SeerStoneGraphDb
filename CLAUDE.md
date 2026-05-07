@@ -120,7 +120,7 @@ This database is an implementation of the knowledge graph model described in
 
 | Concept                     | Erlang mapping                                                                                                                                               |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Node / Concept**          | A record identified by an Nref (positive integer); `kind` is one of `category \| attribute \| class \| instance`                                             |
+| **Node / Concept**          | A record identified by an Nref (positive integer); `kind` is one of `category \| attribute \| class \| instance \| template`                                 |
 | **Category Node**           | Permanent top-level organisational scaffold; forms the skeleton of the entire graph; **bootstrap-only** — cannot be created, modified, or deleted at runtime |
 | **Instance Node**           | Concrete entity: has a name attribute, class membership, compositional parent, and relationships                                                             |
 | **Class Node**              | Type/schema: has a class name attribute, instance name attribute, and qualifying characteristics                                                             |
@@ -137,7 +137,7 @@ Two database roles:
 | **Ontology**                 | All category, attribute, class, and language nodes; bootstrap scaffold; arc label definitions | Category nodes: immutable (bootstrap-only). All other nodes grow freely at runtime. |
 | **Project (instance space)** | Instance nodes and their relationships; one database per project                              | Fully mutable at runtime                                                            |
 
-The environment is shared across all projects. Only bootstrap nrefs (1–30) and a small number of explicitly seeded runtime nrefs (e.g., `target_kind`) are referenced by nref constant in code — all other runtime-added nodes are treated generically.
+The environment is shared across all projects. Only bootstrap nrefs (1–31) and a small number of explicitly seeded runtime nrefs (e.g., `target_kind`) are referenced by nref constant in code — all other runtime-added nodes are treated generically.
 
 nref spaces:
 - **Environment**: bootstrap nrefs 1–30; runtime nrefs 10000+ (protected by `{nref_start, 10000}` in `bootstrap.terms`)
@@ -145,7 +145,7 @@ nref spaces:
 
 Cross-database nref resolution: `characterization` and `reciprocal` fields always reference environment nrefs; `target_nref` is routed to environment or project based on the arc label's `target_kind` AVP stored in the environment attribute library.
 
-### Bootstrap Nref Quick-Reference (BFS, nrefs 1–30)
+### Bootstrap Nref Quick-Reference (BFS, nrefs 1–31)
 
 ```
  1  Root (category)
@@ -178,6 +178,7 @@ Cross-database nref resolution: `characterization` and `reciprocal` fields alway
 28      Child  — instance compositional arc label (parent: 16)
 29      Class  — instance→class membership arc (parent: 16)
 30      Instance — class→instances membership arc (parent: 16)
+31      Template — Connection-arc scope AVP marker (parent: 16)
 ```
 
 NameAttrNref quick-reference: category=17, attribute=18, class=19, instance=20
@@ -211,7 +212,7 @@ Every graph node is stored as a Mnesia record:
 ```erlang
 -record(node, {
   nref,                   %% integer() — unique positive integer; primary key
-  kind,                   %% category | attribute | class | instance
+  kind,                   %% category | attribute | class | instance | template
   parent,                 %% integer() | undefined  (undefined = root node only)
   attribute_value_pairs   %% [#{attribute => AttrNref, value => Value}]
 }).
