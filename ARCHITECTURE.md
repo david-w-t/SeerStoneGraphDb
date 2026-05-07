@@ -4,7 +4,7 @@
 > implementation progresses within an already-described component. The canonical
 > spec is [`the-knowledge-network.md`](the-knowledge-network.md); the kernel
 > implements that model. Outstanding work is grouped by severity in
-> `TASKS-CRITICAL.md`, `TASKS-HIGH.md`, `TASKS-MEDIUM.md`, and `TASKS-LOW.md`.
+> `TASKS-HIGH.md`, `TASKS-MEDIUM.md`, and `TASKS-LOW.md`.
 
 ---
 

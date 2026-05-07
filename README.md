@@ -24,9 +24,9 @@ underway:
 | `graphdb_rules`        | Gen_server stub — deferred to Enhancements (pattern recognition, relationship constraints)                                                         |
 | `graphdb_language`     | Gen_server stub — next to implement (Task 6)                                                                                                       |
 
-**156 tests** (62 EUnit + 94 Common Test) — all passing. See
-`TASKS-CRITICAL.md`, `TASKS-HIGH.md`, `TASKS-MEDIUM.md`, and `TASKS-LOW.md`
-for the prioritised task list (organised by severity).
+**179 tests** (64 EUnit + 115 Common Test) — all passing. See
+`TASKS-HIGH.md`, `TASKS-MEDIUM.md`, and `TASKS-LOW.md` for the
+prioritised task list (organised by severity).
 
 ---
 
@@ -79,7 +79,6 @@ SeerStoneGraphDb/
 │   └── nref/          # Globally unique node-reference ID allocator
 ├── rebar.config       # rebar3 umbrella build configuration
 ├── Makefile           # Convenience targets (compile, shell, release, clean)
-├── TASKS-CRITICAL.md  # Schema-level tasks
 ├── TASKS-HIGH.md      # Inheritance/membership correctness bugs
 ├── TASKS-MEDIUM.md    # Semantic departures + query language + rules engine
 ├── TASKS-LOW.md       # Polish, perf, OTP plumbing, dictionary wiring
@@ -312,9 +311,8 @@ controlled by `logger_level` in `config/sys.config`.
 
 See `CLAUDE.md` for detailed coding conventions, the NYI/UEM macro pattern,
 module header format, naming conventions, and the git workflow. See
-`TASKS-CRITICAL.md`, `TASKS-HIGH.md`, `TASKS-MEDIUM.md`, and `TASKS-LOW.md`
-for the prioritised list of remaining implementation work, organised by
-severity.
+`TASKS-HIGH.md`, `TASKS-MEDIUM.md`, and `TASKS-LOW.md` for the prioritised
+list of remaining implementation work, organised by severity.
 
 Key conventions at a glance:
 
