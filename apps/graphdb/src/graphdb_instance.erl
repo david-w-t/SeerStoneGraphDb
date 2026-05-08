@@ -101,7 +101,8 @@
 -record(node, {
 	nref,					%% integer() -- primary key
 	kind,					%% category | attribute | class | instance | template
-	parent,					%% integer() | undefined (undefined = root only)
+	parents = [],			%% [integer()] -- cache of parent arcs (composition/taxonomy)
+	classes = [],			%% [integer()] -- cache of instantiation arcs (instances only)
 	attribute_value_pairs	%% [#{attribute => Nref, value => term()}]
 }).
 
@@ -384,7 +385,8 @@ do_write_instance(Name, ClassNref, ParentNref) ->
 	Node = #node{
 		nref = Nref,
 		kind = instance,
-		parent = ParentNref,
+		parents = [ParentNref],
+		classes = [ClassNref],
 		attribute_value_pairs = [NameAVP]
 	},
 	%% Instance -> Class (char=29, reciprocal=30)
@@ -534,7 +536,8 @@ resolve_template(TemplateNref, _SourceClass) when is_integer(TemplateNref) ->
 %%-----------------------------------------------------------------------------
 validate_template_scope(TemplateNref, SourceClass, TargetClass) ->
 	case graphdb_class:get_template(TemplateNref) of
-		{ok, #node{parent = TmplClass}} ->
+		{ok, #node{parents = TmplParents}} ->
+			TmplClass = head_parent(TmplParents),
 			InSource = graphdb_class:class_in_ancestry(TmplClass, SourceClass),
 			InTarget = graphdb_class:class_in_ancestry(TmplClass, TargetClass),
 			case InSource orelse InTarget of
@@ -622,7 +625,8 @@ do_get_instance(Nref) ->
 %%-----------------------------------------------------------------------------
 do_children(Nref) ->
 	F = fun() ->
-		Children = mnesia:index_read(nodes, Nref, #node.parent),
+		Children = downward_children_by_arc(Nref, ?INST_CHILD_ARC,
+			composition),
 		[N || N <- Children, N#node.kind =:= instance]
 	end,
 	case mnesia:transaction(F) of
@@ -640,8 +644,8 @@ do_children(Nref) ->
 %%-----------------------------------------------------------------------------
 do_compositional_ancestors(Nref) ->
 	case mnesia:transaction(fun() -> mnesia:read(nodes, Nref) end) of
-		{atomic, [#node{kind = instance, parent = Parent}]} ->
-			do_walk_ancestors(Parent, []);
+		{atomic, [#node{kind = instance, parents = Parents}]} ->
+			do_walk_ancestors(head_parent(Parents), []);
 		{atomic, [_]} ->
 			{error, not_an_instance};
 		{atomic, []} ->
@@ -654,8 +658,8 @@ do_walk_ancestors(undefined, Acc) ->
 	{ok, lists:reverse(Acc)};
 do_walk_ancestors(Nref, Acc) ->
 	case mnesia:transaction(fun() -> mnesia:read(nodes, Nref) end) of
-		{atomic, [#node{kind = instance, parent = Parent} = Node]} ->
-			do_walk_ancestors(Parent, [Node | Acc]);
+		{atomic, [#node{kind = instance, parents = Parents} = Node]} ->
+			do_walk_ancestors(head_parent(Parents), [Node | Acc]);
 		{atomic, [_]} ->
 			%% Hit a non-instance node (e.g., category anchor) — stop
 			{ok, lists:reverse(Acc)};
@@ -691,7 +695,8 @@ do_resolve_value(InstNref, AttrNref) ->
 						not_found ->
 							%% Priority 3: Compositional ancestors
 							case resolve_from_ancestors(
-									Node#node.parent, AttrNref) of
+									head_parent(Node#node.parents),
+									AttrNref) of
 								{ok, _} = Found ->
 									Found;
 								not_found ->
@@ -768,11 +773,12 @@ resolve_from_ancestors(undefined, _AttrNref) ->
 	not_found;
 resolve_from_ancestors(ParentNref, AttrNref) ->
 	case mnesia:transaction(fun() -> mnesia:read(nodes, ParentNref) end) of
-		{atomic, [#node{kind = instance, parent = GrandParent,
+		{atomic, [#node{kind = instance, parents = GrandParents,
 				attribute_value_pairs = AVPs}]} ->
 			case find_avp_value(AVPs, AttrNref) of
 				{ok, _} = Found -> Found;
-				not_found       -> resolve_from_ancestors(GrandParent, AttrNref)
+				not_found       -> resolve_from_ancestors(
+									head_parent(GrandParents), AttrNref)
 			end;
 		{atomic, [_]} ->
 			not_found;
@@ -781,6 +787,34 @@ resolve_from_ancestors(ParentNref, AttrNref) ->
 		{aborted, Reason} ->
 			{error, Reason}
 	end.
+
+
+%%-----------------------------------------------------------------------------
+%% head_parent(Parents) -> integer() | undefined
+%%
+%% Returns the first parent in the cache list, or `undefined` for root
+%% nodes (empty parents list).  Used by single-chain ancestor walks; H3
+%% will introduce multi-parent walks that traverse the full list.
+%%-----------------------------------------------------------------------------
+head_parent([])      -> undefined;
+head_parent([P | _]) -> P.
+
+
+%%-----------------------------------------------------------------------------
+%% downward_children_by_arc(ParentNref, ChildArc, RelKind) -> [#node{}]
+%%
+%% Replaces the retired #node.parent secondary index.  Reads outgoing
+%% arcs from ParentNref of the given Kind/characterization and
+%% dereferences each target nref to a node record.  Must run inside an
+%% active mnesia transaction.
+%%-----------------------------------------------------------------------------
+downward_children_by_arc(ParentNref, ChildArc, RelKind) ->
+	Arcs = mnesia:index_read(relationships, ParentNref,
+		#relationship.source_nref),
+	Nrefs = [A#relationship.target_nref || A <- Arcs,
+		A#relationship.kind =:= RelKind,
+		A#relationship.characterization =:= ChildArc],
+	lists:flatmap(fun(N) -> mnesia:read(nodes, N) end, Nrefs).
 
 
 %%-----------------------------------------------------------------------------

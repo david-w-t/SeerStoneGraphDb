@@ -28,7 +28,8 @@
 -record(node, {
 	nref,
 	kind,
-	parent,
+	parents = [],
+	classes = [],
 	attribute_value_pairs
 }).
 
@@ -235,7 +236,7 @@ load_root_node_correct(_Config) ->
 	end),
 	?assertEqual(1, Root#node.nref),
 	?assertEqual(category, Root#node.kind),
-	?assertEqual(undefined, Root#node.parent),
+	?assertEqual([], Root#node.parents),
 	?assertEqual([#{attribute => 17, value => "Root"}],
 		Root#node.attribute_value_pairs).
 
@@ -249,7 +250,7 @@ load_attribute_node_correct(_Config) ->
 	end),
 	?assertEqual(18, Node#node.nref),
 	?assertEqual(attribute, Node#node.kind),
-	?assertEqual(10, Node#node.parent),    %% parent: Attribute Name Attributes
+	?assertEqual([10], Node#node.parents),    %% parent: Attribute Name Attributes
 	?assertEqual([#{attribute => 18, value => "Name"}],
 		Node#node.attribute_value_pairs).
 
@@ -265,23 +266,30 @@ load_template_avp_node_correct(_Config) ->
 	end),
 	?assertEqual(31, Node#node.nref),
 	?assertEqual(attribute, Node#node.kind),
-	?assertEqual(16, Node#node.parent),    %% Instance Relationships subtree
+	?assertEqual([16], Node#node.parents),    %% Instance Relationships subtree
 	?assertEqual([#{attribute => 18, value => "Template"}],
 		Node#node.attribute_value_pairs).
 
 %%-----------------------------------------------------------------------------
-%% Verify Root's children via the parent index.
+%% Verify Root's children via the compositional arcs (char=22, kind=composition).
 %%-----------------------------------------------------------------------------
 load_category_children(_Config) ->
 	ok = graphdb_bootstrap:load(),
-	{atomic, Children} = mnesia:transaction(fun() ->
-		mnesia:index_read(nodes, 1, #node.parent)
+	{atomic, Arcs} = mnesia:transaction(fun() ->
+		mnesia:index_read(relationships, 1, #relationship.source_nref)
 	end),
-	ChildNrefs = lists:sort([N#node.nref || N <- Children]),
+	ChildNrefs = lists:sort([A#relationship.target_nref ||
+		A <- Arcs,
+		A#relationship.kind =:= composition,
+		A#relationship.characterization =:= 22]),
 	%% Root's children: Attributes(2), Classes(3), Languages(4), Projects(5)
 	?assertEqual([2, 3, 4, 5], ChildNrefs),
-	%% All are category nodes
-	?assert(lists:all(fun(N) -> N#node.kind =:= category end, Children)).
+	%% Each child node is a category and lists Root in its parents cache
+	{atomic, Children} = mnesia:transaction(fun() ->
+		[hd(mnesia:read(nodes, N)) || N <- ChildNrefs]
+	end),
+	?assert(lists:all(fun(N) -> N#node.kind =:= category end, Children)),
+	?assert(lists:all(fun(N) -> N#node.parents =:= [1] end, Children)).
 
 %%-----------------------------------------------------------------------------
 %% Verify relationship row structure for Root -> Attributes arc.

@@ -28,7 +28,8 @@
 -record(node, {
 	nref,
 	kind,
-	parent,
+	parents = [],
+	classes = [],
 	attribute_value_pairs
 }).
 
@@ -239,7 +240,7 @@ create_instance_basic(_Config) ->
 	{ok, InstNref} = graphdb_instance:create_instance("Car1", ClassNref, 5),
 	{ok, Node} = graphdb_instance:get_instance(InstNref),
 	?assertEqual(instance, Node#node.kind),
-	?assertEqual(5, Node#node.parent),
+	?assertEqual([5], Node#node.parents),
 	?assertEqual([#{attribute => 20, value => "Car1"}],
 		Node#node.attribute_value_pairs).
 

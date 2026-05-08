@@ -67,7 +67,8 @@
 -record(node, {
 	nref,					%% integer() — primary key
 	kind,					%% category | attribute | class | instance | template
-	parent,					%% integer() | undefined (undefined = root only)
+	parents = [],			%% [integer()] — cache of parent arcs (composition/taxonomy)
+	classes = [],			%% [integer()] — cache of instantiation arcs (instances only)
 	attribute_value_pairs	%% [#{attribute => Nref, value => term()}]
 }).
 
@@ -180,8 +181,7 @@ create_tables() ->
 	ok = create_table(nodes, [
 		{record_name, node},
 		{attributes, record_info(fields, node)},
-		{disc_copies, NodeList},
-		{index, [parent]}
+		{disc_copies, NodeList}
 	]),
 	ok = create_table(relationships, [
 		{record_name, relationship},
@@ -371,10 +371,15 @@ write_nodes(Nodes) ->
 term_to_node({node, Nref, Kind, Parent, {NameAttrNref, NameValue}, ExtraAVPs}) ->
 	NameAVP = #{attribute => NameAttrNref, value => NameValue},
 	Extras = [#{attribute => A, value => V} || {A, V} <- ExtraAVPs],
+	Parents = case Parent of
+		undefined -> [];
+		N when is_integer(N) -> [N]
+	end,
 	#node{
 		nref = Nref,
 		kind = Kind,
-		parent = Parent,
+		parents = Parents,
+		classes = [],
 		attribute_value_pairs = [NameAVP | Extras]
 	}.
 

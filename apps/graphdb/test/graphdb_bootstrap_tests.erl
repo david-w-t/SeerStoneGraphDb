@@ -231,21 +231,25 @@ validate_stops_at_first_error_test() ->
 %% term_to_node/1 tests
 %%=============================================================================
 
+%% Record positions after H0b: {node, Nref, Kind, Parents, Classes, AVPs}
+%%   pos 2=nref, 3=kind, 4=parents, 5=classes, 6=attribute_value_pairs
 term_to_node_category_test() ->
 	Term = {node, 1, category, undefined, {17, "Root"}, []},
 	Rec = graphdb_bootstrap:term_to_node(Term),
 	?assertEqual(1, element(2, Rec)),			%% nref
 	?assertEqual(category, element(3, Rec)),	%% kind
-	?assertEqual(undefined, element(4, Rec)),	%% parent
-	?assertEqual([#{attribute => 17, value => "Root"}], element(5, Rec)).
+	?assertEqual([], element(4, Rec)),			%% parents (root)
+	?assertEqual([], element(5, Rec)),			%% classes
+	?assertEqual([#{attribute => 17, value => "Root"}], element(6, Rec)).
 
 term_to_node_attribute_test() ->
 	Term = {node, 6, attribute, 2, {18, "Names"}, []},
 	Rec = graphdb_bootstrap:term_to_node(Term),
 	?assertEqual(6, element(2, Rec)),
 	?assertEqual(attribute, element(3, Rec)),
-	?assertEqual(2, element(4, Rec)),
-	?assertEqual([#{attribute => 18, value => "Names"}], element(5, Rec)).
+	?assertEqual([2], element(4, Rec)),			%% parents
+	?assertEqual([], element(5, Rec)),			%% classes
+	?assertEqual([#{attribute => 18, value => "Names"}], element(6, Rec)).
 
 term_to_node_with_extra_avps_test() ->
 	Term = {node, 1, category, undefined, {17, "Root"}, [{99, "extra"}, {100, 42}]},
@@ -255,12 +259,12 @@ term_to_node_with_extra_avps_test() ->
 		#{attribute => 99, value => "extra"},
 		#{attribute => 100, value => 42}
 	],
-	?assertEqual(Expected, element(5, Rec)).
+	?assertEqual(Expected, element(6, Rec)).
 
 term_to_node_empty_name_test() ->
 	Term = {node, 1, category, undefined, {17, ""}, []},
 	Rec = graphdb_bootstrap:term_to_node(Term),
-	?assertEqual([#{attribute => 17, value => ""}], element(5, Rec)).
+	?assertEqual([#{attribute => 17, value => ""}], element(6, Rec)).
 
 
 %%=============================================================================

@@ -28,7 +28,8 @@
 -record(node, {
 	nref,
 	kind,
-	parent,
+	parents = [],
+	classes = [],
 	attribute_value_pairs
 }).
 
@@ -250,7 +251,7 @@ qc_seed_created_on_first_start(_Config) ->
 	%% Verify it's a real attribute node under Literals (parent=7)
 	{ok, Node} = graphdb_attr:get_attribute(QcNref),
 	?assertEqual(attribute, Node#node.kind),
-	?assertEqual(7, Node#node.parent).
+	?assertEqual([7], Node#node.parents).
 
 %%-----------------------------------------------------------------------------
 %% Restarting graphdb_class must detect the existing seed and NOT
@@ -290,7 +291,7 @@ create_class_top_level(_Config) ->
 	{ok, Nref} = graphdb_class:create_class("Animal", 3),
 	{ok, Node} = graphdb_class:get_class(Nref),
 	?assertEqual(class, Node#node.kind),
-	?assertEqual(3, Node#node.parent),
+	?assertEqual([3], Node#node.parents),
 	?assertEqual([#{attribute => 19, value => "Animal"}],
 		Node#node.attribute_value_pairs).
 
@@ -302,7 +303,7 @@ create_class_subclass(_Config) ->
 	{ok, AnimalNref} = graphdb_class:create_class("Animal", 3),
 	{ok, MammalNref} = graphdb_class:create_class("Mammal", AnimalNref),
 	{ok, Mammal} = graphdb_class:get_class(MammalNref),
-	?assertEqual(AnimalNref, Mammal#node.parent).
+	?assertEqual([AnimalNref], Mammal#node.parents).
 
 %%-----------------------------------------------------------------------------
 %% Reject creation with a non-class/non-category parent.
@@ -365,7 +366,7 @@ create_class_auto_creates_default_template(_Config) ->
 	{ok, TemplateNref} = graphdb_class:default_template(ClassNref),
 	{ok, TemplateNode} = graphdb_class:get_template(TemplateNref),
 	?assertEqual(template, TemplateNode#node.kind),
-	?assertEqual(ClassNref, TemplateNode#node.parent),
+	?assertEqual([ClassNref], TemplateNode#node.parents),
 	?assert(lists:member(#{attribute => 19, value => "default"},
 		TemplateNode#node.attribute_value_pairs)).
 
@@ -383,7 +384,7 @@ add_template_basic(_Config) ->
 	{ok, TmplNref} = graphdb_class:add_template(ClassNref, "biological"),
 	{ok, Node} = graphdb_class:get_template(TmplNref),
 	?assertEqual(template, Node#node.kind),
-	?assertEqual(ClassNref, Node#node.parent),
+	?assertEqual([ClassNref], Node#node.parents),
 	?assert(lists:member(#{attribute => 19, value => "biological"},
 		Node#node.attribute_value_pairs)).
 

@@ -28,7 +28,8 @@
 -record(node, {
 	nref,
 	kind,
-	parent,
+	parents = [],
+	classes = [],
 	attribute_value_pairs
 }).
 
@@ -279,7 +280,7 @@ get_node_root(_Config) ->
 	{ok, Root} = graphdb_mgr:get_node(1),
 	?assertEqual(1, Root#node.nref),
 	?assertEqual(category, Root#node.kind),
-	?assertEqual(undefined, Root#node.parent),
+	?assertEqual([], Root#node.parents),
 	?assertEqual([#{attribute => 17, value => "Root"}],
 		Root#node.attribute_value_pairs).
 
@@ -291,7 +292,7 @@ get_node_attribute(_Config) ->
 	{ok, Node} = graphdb_mgr:get_node(18),
 	?assertEqual(18, Node#node.nref),
 	?assertEqual(attribute, Node#node.kind),
-	?assertEqual(10, Node#node.parent),    %% parent: Attribute Name Attributes
+	?assertEqual([10], Node#node.parents),    %% parent: Attribute Name Attributes
 	?assertEqual([#{attribute => 18, value => "Name"}],
 		Node#node.attribute_value_pairs).
 
