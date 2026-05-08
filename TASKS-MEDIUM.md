@@ -72,24 +72,14 @@ directly; the membership arc lookup reuses `do_class_of/1` so
 
 ---
 
-## M1. PART-OF stored in two places with no consistency invariant
+## M1. PART-OF stored in two places with no consistency invariant — RESOLVED
 
-**Evidence:** `graphdb_instance.erl:326-386`. `create_instance` writes
-`node.parent = ParentNref` AND a 27/28 arc pair. No invariant check;
-nothing prevents the two from diverging.
-
-**Decision needed:** is `node.parent` a denormalized cache of the 27-arc,
-or are the arcs themselves the cache?
-
-**Recommended:** treat `node.parent` as the cache (it's there for the
-O(1) `mnesia:index_read(nodes, _, #node.parent)` lookup). Document the
-invariant and add an assertion in tests. Any future re-parent or delete
-operation must update both. (Single compositional parent only; multiple
-compositional parents are flagged as a smell in §6 and intentionally
-not supported.)
-
-**Dependencies:** none. Decide and write down before implementing
-delete or re-parent operations.
+**Status:** Closed by H0 (`TASKS-HIGH.md`). The decision: arcs are
+authoritative, `node.parents`/`node.classes` are caches with a hard
+invariant enforced by `graphdb_mgr:verify_caches/0` (run in every CT
+`end_per_testcase` and at bootstrap load completion). Single-writer
+ownership rule documented in `arcs-authoritative.md` and
+`ARCHITECTURE.md` §3.
 
 ---
 

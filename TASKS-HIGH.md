@@ -4,51 +4,35 @@ Single-statement bugs against spec semantics. Each one means the engine
 silently produces a wrong answer for a case the spec calls out
 explicitly.
 
-Tasks are listed in execution order. H1 and H2 were isolated bugs in
-`graphdb_instance` and have landed (see RESOLVED markers below); they
-also closed M2. H0 establishes a project-wide invariant that H3 and
-H4 will build on. H3–H5 require API/schema-shape changes for
-multi-parent / multi-class semantics and should land together.
+Tasks are listed in execution order. H0, H1, and H2 have all
+landed (see RESOLVED markers below). H0 closed M1; H1+H2 closed M2.
+H3–H5 require API-shape changes for multi-parent / multi-class
+semantics and should land together — the schema infrastructure is
+already in place from H0.
 
 ---
 
-## H0. Establish the "arcs authoritative; hierarchy lists cached" invariant
+## H0. Establish the "arcs authoritative; hierarchy lists cached" invariant — RESOLVED
 
-**Spec:** see `arcs-authoritative.md` for the full decision record.
+**Status:** Landed across H0a–H0e. The full decision record is
+`arcs-authoritative.md`; the architectural summary is in
+`ARCHITECTURE.md` §3.
 
-**Substeps** (each substep ends with a commit; PR opens only after
-H0e):
+**Substeps:**
+  - **H0a** (`d5a7244`) — charter + task plan landed.
+  - **H0b** (`0b5fc43`) — node record retired `parent`, gained
+    `parents :: [integer()]` and `classes :: [integer()]` caches.
+    Read sites migrated; downward lookups switched to private
+    `downward_children_by_arc/3` helpers reading `relationships`.
+  - **H0c** (`ce07cb2`) — `graphdb_mgr:verify_caches/0` and
+    `rebuild_caches/0` implemented and wired into every CT suite's
+    `end_per_testcase`.  4 direct CT cases in `cache_audit` group.
+  - **H0d** (`9e5d64a`) — `bootstrap.terms` to Option B (5-tuple node
+    form); loader runs `rebuild_caches/0` + `verify_caches/0` after
+    writing all rows.
+  - **H0e** — this commit; doc fold + RESOLVED markers.
 
-  - **H0a.** Charter + task plan. Land `arcs-authoritative.md` and
-    this checklist. No code changes.
-  - **H0b.** Add `parents :: [integer()]` and
-    `classes :: [integer()]` cache fields to the `node` record.
-    Migrate every `node.parent` read site. Populate the new caches
-    transactionally in `graphdb_class`, `graphdb_instance`,
-    `graphdb_attr`, and `graphdb_bootstrap` write paths. Tests
-    continue to pass with the caches populated as length-1 lists
-    (single-parent semantics preserved).
-  - **H0c.** Implement `graphdb_mgr:verify_caches/0` and
-    `graphdb_mgr:rebuild_caches/0`. Wire `verify_caches/0` into every
-    CT testcase that mutates state. Add direct CT coverage for the
-    new APIs.
-  - **H0d.** Switch the bootstrap loader to Option B. Drop the parent
-    field from `{node, ...}` tuples in
-    `apps/graphdb/priv/bootstrap.terms`; keep the existing per-arc
-    `%%` comments. Loader writes nodes with `parents = []`,
-    `classes = []`, then writes the arcs, then calls
-    `rebuild_caches/0` and `verify_caches/0`.
-  - **H0e.** Update `ARCHITECTURE.md` to absorb the invariant and the
-    cache pattern (see "Future work" section in
-    `arcs-authoritative.md`). Mark H0 RESOLVED here and M1 RESOLVED
-    in `TASKS-MEDIUM.md`. PR opens after this commit.
-
-**Why before H3:** H3 introduces the first non-bootstrap multi-parent
-case. Landing the invariant first means H3 is a small additive change
-(`add_superclass/2` and a multi-parent ancestor walk via the cache)
-rather than a schema migration tangled with semantic changes.
-
-**Dependencies:** none. Closes M1 on completion.
+**Closes:** M1 (`TASKS-MEDIUM.md`).
 
 ---
 

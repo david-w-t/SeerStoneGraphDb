@@ -114,12 +114,17 @@ Every graph node is stored as a Mnesia record:
 -record(node, {
   nref,                   %% integer() — primary key
   kind,                   %% category | attribute | class | instance | template
-  parent,                 %% integer() | undefined  (undefined = root node only)
+  parents = [],           %% [integer()] cache of parent arcs (composition/taxonomy)
+  classes = [],           %% [integer()] cache of instantiation arcs (instances only)
   attribute_value_pairs   %% [#{attribute => AttrNref, value => term()}]
 }).
 ```
 
-Secondary index on `parent` enables efficient `children/1` queries.
+`parents` and `classes` are caches of the authoritative arcs in the
+`relationships` table.  See ARCHITECTURE.md §3 for the cache invariant
+and the `graphdb_mgr:verify_caches/0` / `rebuild_caches/0` audit APIs.
+Downward queries ("children of X") read outgoing arcs from
+`relationships` filtered by kind + characterization.
 
 Relationships are stored in a separate Mnesia table (not embedded in node records):
 

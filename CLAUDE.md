@@ -212,7 +212,8 @@ Every graph node is stored as a Mnesia record:
 -record(node, {
   nref,                   %% integer() — unique positive integer; primary key
   kind,                   %% category | attribute | class | instance | template
-  parent,                 %% integer() | undefined  (undefined = root node only)
+  parents = [],           %% [integer()] cache of parent arcs (composition/taxonomy)
+  classes = [],           %% [integer()] cache of instantiation arcs (instances only)
   attribute_value_pairs   %% [#{attribute => AttrNref, value => Value}]
 }).
 ```

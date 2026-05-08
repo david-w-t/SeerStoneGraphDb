@@ -2,7 +2,10 @@
 
 ## Status
 
-Proposed — to land as task **H0** in `TASKS-HIGH.md` before H3.
+**Accepted** — landed as H0 (commits `d5a7244` H0a, `0b5fc43` H0b,
+`ce07cb2` H0c, `9e5d64a` H0d, plus the H0e doc fold). The invariant
+is summarised in [`ARCHITECTURE.md`](ARCHITECTURE.md) §3; this
+document is retained as the formal decision record.
 
 ## Context
 
@@ -137,6 +140,7 @@ Con:
 
 ## Future work
 
-This document may be folded into `ARCHITECTURE.md` once the invariant
-is established. `ARCHITECTURE.md` may itself be split into multiple
-focused documents at a later date; that decision is deferred.
+`ARCHITECTURE.md` §3 now carries the cache invariant summary. This
+document remains as the frozen decision record. `ARCHITECTURE.md` may
+itself be split into multiple focused documents at a later date; that
+decision is deferred.
