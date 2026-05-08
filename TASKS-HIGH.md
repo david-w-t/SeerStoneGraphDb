@@ -4,11 +4,10 @@ Single-statement bugs against spec semantics. Each one means the engine
 silently produces a wrong answer for a case the spec calls out
 explicitly.
 
-Tasks are listed in execution order. H0, H1, and H2 have all
+Tasks are listed in execution order. H0, H1, H2, and H3 have all
 landed (see RESOLVED markers below). H0 closed M1; H1+H2 closed M2.
-H3–H5 require API-shape changes for multi-parent / multi-class
-semantics and should land together — the schema infrastructure is
-already in place from H0.
+H4 and H5 cover the remaining multi-class instance-membership work
+(API surface and resolver disambiguation) and should land together.
 
 ---
 
@@ -60,33 +59,19 @@ via the parent_arc) and now returns `not_found` as the spec requires.
 
 ---
 
-## H3. Classes support only single inheritance
+## H3. Classes support only single inheritance — RESOLVED
 
-**Spec:** §5 Taxonomy — *"Multiple inheritance is supported natively. A
-concept may have any number of generalizations simultaneously."*
-
-**Evidence:**
-- `graphdb_class.erl:183` — `create_class(Name, ParentClassNref)` takes
-  a single parent.
-- `graphdb_class.erl:601-627` — `do_walk_ancestors/2` walks the single
-  `node.parent` field.
-- `graphdb_class.erl:638-651` — `do_inherited_attributes` builds on the
-  single-chain ancestor walk.
-
-The class taxonomy is also stored in 25/26 arcs; multi-parent inheritance
-can only live there. The current ancestor walk ignores arcs entirely.
-
-**Fix:**
-- New API: `add_superclass/2 :: (ClassNref, AdditionalParentNref) -> ok`.
-  Writes a 25/26 arc pair without touching `node.parent`.
-- Rewrite `do_walk_ancestors` to traverse via the relationships table —
-  read incoming arcs with `characterization =:= ?CLASS_PARENT_ARC` for
-  each class as it's visited. Returns a DAG (deduplicated) in BFS order.
-- `node.parent` retained as the *primary* (creation-time) parent;
-  additional parents live as arcs only.
-
-**Dependencies:** clean implementation benefits from C1 (filter arcs by
-kind=taxonomy).
+**Status:** Fixed. New API `graphdb_class:add_superclass/2` writes a
+25/26 taxonomy arc pair AND appends to the subject class's `parents`
+cache in one transaction (idempotent, rejects self-references).
+`do_walk_ancestors` rewritten as a BFS over the multi-parent DAG using
+the `node.parents` cache; each ancestor is visited at most once
+(diamond inheritance returns shared ancestors exactly once). 10 CT
+cases under the new `multi_inheritance` group cover basic add, arc
+shape, idempotency, validation, multi-parent BFS, diamond dedup,
+multi-parent QC inheritance, and `class_in_ancestry` over added
+parents. Composition remains a single-chain walk (compositional
+hierarchy is a tree, not a DAG).
 
 ---
 
