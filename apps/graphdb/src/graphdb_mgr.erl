@@ -71,7 +71,8 @@
 -record(node, {
 	nref,					%% integer() -- primary key
 	kind,					%% category | attribute | class | instance | template
-	parent,					%% integer() | undefined (undefined = root only)
+	parents = [],			%% [integer()] -- cache of parent arcs (composition/taxonomy)
+	classes = [],			%% [integer()] -- cache of instantiation arcs (instances only)
 	attribute_value_pairs	%% [#{attribute => Nref, value => term()}]
 }).
 
@@ -106,7 +107,10 @@
 		create_instance/3,
 		add_relationship/4,
 		delete_node/1,
-		update_node_avps/2
+		update_node_avps/2,
+		%% Cache invariant audit / repair
+		verify_caches/0,
+		rebuild_caches/0
 		]).
 
 %%---------------------------------------------------------------------
@@ -239,6 +243,51 @@ delete_node(Nref) ->
 %%-----------------------------------------------------------------------------
 update_node_avps(Nref, AVPs) ->
 	gen_server:call(?MODULE, {update_node_avps, Nref, AVPs}).
+
+
+%%-----------------------------------------------------------------------------
+%% verify_caches() -> ok | {error, [{Nref, Field, Expected, Actual}, ...]}
+%%
+%% Scans every node and compares its hierarchy cache fields (`parents`,
+%% `classes`) against the corresponding arcs in the relationships table.
+%% Returns ok when every cache matches its arcs; otherwise returns the
+%% complete list of mismatches.  Order-insensitive comparison.
+%%
+%% A failed verify is a fatal error in the "arcs authoritative; lists
+%% cached" invariant -- it indicates a write path bug, not correctable
+%% drift.  CT suites must call verify_caches/0 after every state-mutating
+%% testcase.
+%%-----------------------------------------------------------------------------
+verify_caches() ->
+	Txn = fun() ->
+		Nrefs = mnesia:all_keys(nodes),
+		lists:flatmap(fun verify_one/1, Nrefs)
+	end,
+	case mnesia:transaction(Txn) of
+		{atomic, []}          -> ok;
+		{atomic, Mismatches}  -> {error, Mismatches};
+		{aborted, Reason}     -> {error, Reason}
+	end.
+
+
+%%-----------------------------------------------------------------------------
+%% rebuild_caches() -> ok | {error, term()}
+%%
+%% Rewrites every node's `parents` and `classes` cache fields from the
+%% authoritative relationships table.  Used as the post-load tail of
+%% the bootstrap loader (Option B, H0d) and as a diagnostic repair tool.
+%% After a successful rebuild, verify_caches/0 must return ok.
+%%-----------------------------------------------------------------------------
+rebuild_caches() ->
+	Txn = fun() ->
+		Nrefs = mnesia:all_keys(nodes),
+		lists:foreach(fun rebuild_one/1, Nrefs),
+		ok
+	end,
+	case mnesia:transaction(Txn) of
+		{atomic, ok}      -> ok;
+		{aborted, Reason} -> {error, Reason}
+	end.
 
 
 %%=============================================================================
@@ -411,3 +460,89 @@ check_category_guard(Nref) ->
 		{error, _} = Err ->
 			Err
 	end.
+
+
+%%-----------------------------------------------------------------------------
+%% Cache invariant audit / repair helpers
+%%
+%% Parent arc characterizations across all hierarchies (per BFS bootstrap):
+%%   21 -- category compositional parent
+%%   23 -- attribute compositional parent
+%%   25 -- class    compositional/taxonomic parent
+%%   27 -- instance compositional parent
+%%
+%% Instance-to-class membership (instantiation):
+%%   29 -- instance -> class
+%%-----------------------------------------------------------------------------
+-define(PARENT_ARCS, [21, 23, 25, 27]).
+-define(CLASS_MEMBERSHIP_ARC, 29).
+
+%%-----------------------------------------------------------------------------
+%% expected_parents(Nref) -> [integer()]
+%%
+%% Reads outgoing arcs from Nref of kind composition or taxonomy whose
+%% characterization is one of the parent-arc labels, and returns the
+%% corresponding target nrefs (the node's parent set).  Must run inside
+%% an active mnesia transaction.
+%%-----------------------------------------------------------------------------
+expected_parents(Nref) ->
+	Arcs = mnesia:index_read(relationships, Nref,
+		#relationship.source_nref),
+	[A#relationship.target_nref || A <- Arcs,
+		(A#relationship.kind =:= composition orelse
+			A#relationship.kind =:= taxonomy),
+		lists:member(A#relationship.characterization, ?PARENT_ARCS)].
+
+
+%%-----------------------------------------------------------------------------
+%% expected_classes(Nref) -> [integer()]
+%%
+%% Reads outgoing instantiation arcs from Nref (char=29) and returns
+%% the corresponding target class nrefs.  Non-instance nodes have no
+%% instantiation arcs, so the returned list is naturally empty.  Must
+%% run inside an active mnesia transaction.
+%%-----------------------------------------------------------------------------
+expected_classes(Nref) ->
+	Arcs = mnesia:index_read(relationships, Nref,
+		#relationship.source_nref),
+	[A#relationship.target_nref || A <- Arcs,
+		A#relationship.kind =:= instantiation,
+		A#relationship.characterization =:= ?CLASS_MEMBERSHIP_ARC].
+
+
+%%-----------------------------------------------------------------------------
+%% verify_one(Nref) -> [{Nref, Field, Expected, Actual}]
+%%
+%% Compares one node's cache fields against its arcs.  Returns a list
+%% of zero, one, or two mismatch tuples.  Must run inside an active
+%% mnesia transaction.
+%%-----------------------------------------------------------------------------
+verify_one(Nref) ->
+	[Node]   = mnesia:read(nodes, Nref),
+	Parents  = lists:sort(expected_parents(Nref)),
+	Classes  = lists:sort(expected_classes(Nref)),
+	Cached_P = lists:sort(Node#node.parents),
+	Cached_C = lists:sort(Node#node.classes),
+	P = case Cached_P =:= Parents of
+		true  -> [];
+		false -> [{Nref, parents, Parents, Node#node.parents}]
+	end,
+	C = case Cached_C =:= Classes of
+		true  -> [];
+		false -> [{Nref, classes, Classes, Node#node.classes}]
+	end,
+	P ++ C.
+
+
+%%-----------------------------------------------------------------------------
+%% rebuild_one(Nref) -> ok
+%%
+%% Rewrites one node's cache fields from its arcs.  Must run inside an
+%% active mnesia transaction.
+%%-----------------------------------------------------------------------------
+rebuild_one(Nref) ->
+	[Node]  = mnesia:read(nodes, Nref),
+	Parents = expected_parents(Nref),
+	Classes = expected_classes(Nref),
+	Updated = Node#node{parents = Parents, classes = Classes},
+	ok = mnesia:write(nodes, Updated, write).

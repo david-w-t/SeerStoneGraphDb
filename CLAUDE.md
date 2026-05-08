@@ -35,7 +35,6 @@ SeerStoneGraphDb/
 ├── rebar.lock         # Locked dependency versions
 ├── Makefile           # Convenience targets (compile, shell, release, clean, rebar3)
 ├── ARCHITECTURE.md    # High-level architecture; kept current with the code
-├── TASKS-CRITICAL.md  # Schema-level tasks (must land before live data)
 ├── TASKS-HIGH.md      # Inheritance/membership correctness bugs
 ├── TASKS-MEDIUM.md    # Semantic departures + query language + rules engine
 ├── TASKS-LOW.md       # Polish, perf, OTP plumbing, dictionary wiring
@@ -213,7 +212,8 @@ Every graph node is stored as a Mnesia record:
 -record(node, {
   nref,                   %% integer() — unique positive integer; primary key
   kind,                   %% category | attribute | class | instance | template
-  parent,                 %% integer() | undefined  (undefined = root node only)
+  parents = [],           %% [integer()] cache of parent arcs (composition/taxonomy)
+  classes = [],           %% [integer()] cache of instantiation arcs (instances only)
   attribute_value_pairs   %% [#{attribute => AttrNref, value => Value}]
 }).
 ```
@@ -259,13 +259,12 @@ These are outstanding items — all previously known bugs have been fixed.
 
 ## Remaining Work
 
-Remaining tasks are organised by severity in four files: `TASKS-CRITICAL.md`,
-`TASKS-HIGH.md`, `TASKS-MEDIUM.md`, `TASKS-LOW.md`. Critical items are
-schema-level departures from `the-knowledge-network.md` and should land
-before any database ships with live data. High items are correctness bugs
-in inheritance and class membership. Medium covers semantic gaps plus the
+Remaining tasks are organised by severity in three files: `TASKS-HIGH.md`,
+`TASKS-MEDIUM.md`, `TASKS-LOW.md`. High items are correctness bugs in
+inheritance and class membership. Medium covers semantic gaps plus the
 query language (Task 6) and rules engine (E1). Low covers polish,
-performance, OTP plumbing, and dictionary wiring (Task 7).
+performance, OTP plumbing, and dictionary wiring (Task 7). Critical
+schema-level work is complete (PR #9, commit `ce2e281`).
 
 ## Configuration
 
@@ -320,8 +319,8 @@ detail.
 - Implementation progress within an already-described component.
 
 The canonical spec is `the-knowledge-network.md` — it does **not** track
-the code. Outstanding work lives in `TASKS-CRITICAL.md`,
-`TASKS-HIGH.md`, `TASKS-MEDIUM.md`, and `TASKS-LOW.md`.
+the code. Outstanding work lives in `TASKS-HIGH.md`, `TASKS-MEDIUM.md`,
+and `TASKS-LOW.md`.
 
 ## Storage Technologies Used
 

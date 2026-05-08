@@ -28,7 +28,8 @@
 -record(node, {
 	nref,
 	kind,
-	parent,
+	parents = [],
+	classes = [],
 	attribute_value_pairs
 }).
 
@@ -83,7 +84,12 @@
 	create_attribute_not_implemented/1,
 	create_class_not_implemented/1,
 	create_instance_not_implemented/1,
-	add_relationship_not_implemented/1
+	add_relationship_not_implemented/1,
+	%% Cache audit / repair
+	verify_caches_clean_after_bootstrap/1,
+	verify_caches_detects_poisoned_parents/1,
+	verify_caches_detects_poisoned_classes/1,
+	rebuild_caches_restores_after_poison/1
 ]).
 
 
@@ -96,7 +102,8 @@ suite() ->
 
 all() ->
 	[{group, init_tests}, {group, read_ops},
-	 {group, category_guard}, {group, write_stubs}].
+	 {group, category_guard}, {group, write_stubs},
+	 {group, cache_audit}].
 
 groups() ->
 	[
@@ -126,6 +133,12 @@ groups() ->
 			create_class_not_implemented,
 			create_instance_not_implemented,
 			add_relationship_not_implemented
+		]},
+		{cache_audit, [], [
+			verify_caches_clean_after_bootstrap,
+			verify_caches_detects_poisoned_parents,
+			verify_caches_detects_poisoned_classes,
+			rebuild_caches_restores_after_poison
 		]}
 	].
 
@@ -196,7 +209,8 @@ setup_isolated_env(Config) ->
 %%
 %% Stops graphdb_mgr, nref, Mnesia, restores cwd, and deletes temp dir.
 %%-----------------------------------------------------------------------------
-end_per_testcase(_TC, Config) ->
+end_per_testcase(TC, Config) ->
+	verify_cache_invariant(TC),
 	%% Stop graphdb_mgr if running
 	catch gen_server:stop(graphdb_mgr),
 
@@ -221,6 +235,22 @@ end_per_testcase(_TC, Config) ->
 	application:unset_env(mnesia, dir),
 
 	ok.
+
+%% Asserts the "arcs authoritative; lists cached" invariant after each
+%% testcase.  A failed verify is a fatal CT failure -- it indicates a
+%% write path bug, not correctable drift.
+verify_cache_invariant(TC) ->
+	case mnesia:system_info(is_running) of
+		yes ->
+			case graphdb_mgr:verify_caches() of
+				ok -> ok;
+				{error, Mismatches} ->
+					ct:pal("Cache invariant failed in ~p:~n~p",
+						[TC, Mismatches]),
+					ct:fail({cache_invariant_failed, TC, Mismatches})
+			end;
+		_ -> ok
+	end.
 
 
 %%=============================================================================
@@ -279,7 +309,7 @@ get_node_root(_Config) ->
 	{ok, Root} = graphdb_mgr:get_node(1),
 	?assertEqual(1, Root#node.nref),
 	?assertEqual(category, Root#node.kind),
-	?assertEqual(undefined, Root#node.parent),
+	?assertEqual([], Root#node.parents),
 	?assertEqual([#{attribute => 17, value => "Root"}],
 		Root#node.attribute_value_pairs).
 
@@ -291,7 +321,7 @@ get_node_attribute(_Config) ->
 	{ok, Node} = graphdb_mgr:get_node(18),
 	?assertEqual(18, Node#node.nref),
 	?assertEqual(attribute, Node#node.kind),
-	?assertEqual(10, Node#node.parent),    %% parent: Attribute Name Attributes
+	?assertEqual([10], Node#node.parents),    %% parent: Attribute Name Attributes
 	?assertEqual([#{attribute => 18, value => "Name"}],
 		Node#node.attribute_value_pairs).
 
@@ -431,6 +461,79 @@ add_relationship_not_implemented(_Config) ->
 	{ok, _} = graphdb_mgr:start_link(),
 	?assertEqual({error, not_implemented},
 		graphdb_mgr:add_relationship(100, 22, 200, 21)).
+
+
+%%=============================================================================
+%% Cache Audit / Repair Tests
+%%=============================================================================
+
+%%-----------------------------------------------------------------------------
+%% A freshly bootstrapped database satisfies the cache invariant: every
+%% node's parents/classes lists agree with the relationships table.
+%%-----------------------------------------------------------------------------
+verify_caches_clean_after_bootstrap(_Config) ->
+	{ok, _} = graphdb_mgr:start_link(),
+	?assertEqual(ok, graphdb_mgr:verify_caches()).
+
+%%-----------------------------------------------------------------------------
+%% Poisoning a node's parents cache makes verify_caches return an error
+%% tuple naming the offending node, the field, the expected value (from
+%% the arcs), and the actual cached value.
+%%-----------------------------------------------------------------------------
+verify_caches_detects_poisoned_parents(_Config) ->
+	{ok, _} = graphdb_mgr:start_link(),
+	%% Nref 6 (Names) is an attribute child of nref 2 (Attributes); the
+	%% bootstrap arc 2 -> 6 makes parents=[2] the truth.
+	{atomic, ok} = mnesia:transaction(fun() ->
+		[Node] = mnesia:read(nodes, 6),
+		Poisoned = Node#node{parents = [9999]},
+		mnesia:write(nodes, Poisoned, write)
+	end),
+	{error, Mismatches} = graphdb_mgr:verify_caches(),
+	?assertEqual([{6, parents, [2], [9999]}], Mismatches),
+	%% Restore so end_per_testcase verify_cache_invariant doesn't trip.
+	ok = graphdb_mgr:rebuild_caches().
+
+%%-----------------------------------------------------------------------------
+%% Poisoning a non-instance node's classes cache (which should be []) is
+%% also detected.  Bootstrap nodes are all non-instance, so any non-empty
+%% classes list is a mismatch.
+%%-----------------------------------------------------------------------------
+verify_caches_detects_poisoned_classes(_Config) ->
+	{ok, _} = graphdb_mgr:start_link(),
+	{atomic, ok} = mnesia:transaction(fun() ->
+		[Node] = mnesia:read(nodes, 7),
+		Poisoned = Node#node{classes = [42]},
+		mnesia:write(nodes, Poisoned, write)
+	end),
+	{error, Mismatches} = graphdb_mgr:verify_caches(),
+	?assertEqual([{7, classes, [], [42]}], Mismatches),
+	%% Restore so end_per_testcase verify_cache_invariant doesn't trip.
+	ok = graphdb_mgr:rebuild_caches().
+
+%%-----------------------------------------------------------------------------
+%% rebuild_caches/0 rewrites every node's cache from the arcs.  After a
+%% rebuild, verify_caches/0 must return ok even if multiple caches were
+%% poisoned.
+%%-----------------------------------------------------------------------------
+rebuild_caches_restores_after_poison(_Config) ->
+	{ok, _} = graphdb_mgr:start_link(),
+	{atomic, ok} = mnesia:transaction(fun() ->
+		[N6]  = mnesia:read(nodes, 6),
+		[N7]  = mnesia:read(nodes, 7),
+		[N18] = mnesia:read(nodes, 18),
+		mnesia:write(nodes, N6#node{parents = [9999]}, write),
+		mnesia:write(nodes, N7#node{classes = [42]}, write),
+		mnesia:write(nodes, N18#node{parents = []}, write)
+	end),
+	{error, Mismatches} = graphdb_mgr:verify_caches(),
+	?assertEqual(3, length(Mismatches)),
+	ok = graphdb_mgr:rebuild_caches(),
+	?assertEqual(ok, graphdb_mgr:verify_caches()),
+	{atomic, [Restored18]} = mnesia:transaction(fun() ->
+		mnesia:read(nodes, 18)
+	end),
+	?assertEqual([10], Restored18#node.parents).
 
 
 %%=============================================================================

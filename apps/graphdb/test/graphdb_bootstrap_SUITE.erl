@@ -28,7 +28,8 @@
 -record(node, {
 	nref,
 	kind,
-	parent,
+	parents = [],
+	classes = [],
 	attribute_value_pairs
 }).
 
@@ -174,7 +175,9 @@ init_per_testcase(_TC, Config) ->
 %%
 %% Stops nref, stops Mnesia, restores cwd, and deletes the temp dir.
 %%-----------------------------------------------------------------------------
-end_per_testcase(_TC, Config) ->
+end_per_testcase(TC, Config) ->
+	verify_cache_invariant(TC),
+
 	%% Stop applications (ignore errors — they may not be running)
 	catch application:stop(nref),
 	catch mnesia:stop(),
@@ -196,6 +199,22 @@ end_per_testcase(_TC, Config) ->
 	application:unset_env(mnesia, dir),
 
 	ok.
+
+%% Asserts the "arcs authoritative; lists cached" invariant after each
+%% testcase.  A failed verify is a fatal CT failure -- it indicates a
+%% write path bug, not correctable drift.
+verify_cache_invariant(TC) ->
+	case mnesia:system_info(is_running) of
+		yes ->
+			case graphdb_mgr:verify_caches() of
+				ok -> ok;
+				{error, Mismatches} ->
+					ct:pal("Cache invariant failed in ~p:~n~p",
+						[TC, Mismatches]),
+					ct:fail({cache_invariant_failed, TC, Mismatches})
+			end;
+		_ -> ok
+	end.
 
 
 %%=============================================================================
@@ -235,7 +254,7 @@ load_root_node_correct(_Config) ->
 	end),
 	?assertEqual(1, Root#node.nref),
 	?assertEqual(category, Root#node.kind),
-	?assertEqual(undefined, Root#node.parent),
+	?assertEqual([], Root#node.parents),
 	?assertEqual([#{attribute => 17, value => "Root"}],
 		Root#node.attribute_value_pairs).
 
@@ -249,7 +268,7 @@ load_attribute_node_correct(_Config) ->
 	end),
 	?assertEqual(18, Node#node.nref),
 	?assertEqual(attribute, Node#node.kind),
-	?assertEqual(10, Node#node.parent),    %% parent: Attribute Name Attributes
+	?assertEqual([10], Node#node.parents),    %% parent: Attribute Name Attributes
 	?assertEqual([#{attribute => 18, value => "Name"}],
 		Node#node.attribute_value_pairs).
 
@@ -265,23 +284,30 @@ load_template_avp_node_correct(_Config) ->
 	end),
 	?assertEqual(31, Node#node.nref),
 	?assertEqual(attribute, Node#node.kind),
-	?assertEqual(16, Node#node.parent),    %% Instance Relationships subtree
+	?assertEqual([16], Node#node.parents),    %% Instance Relationships subtree
 	?assertEqual([#{attribute => 18, value => "Template"}],
 		Node#node.attribute_value_pairs).
 
 %%-----------------------------------------------------------------------------
-%% Verify Root's children via the parent index.
+%% Verify Root's children via the compositional arcs (char=22, kind=composition).
 %%-----------------------------------------------------------------------------
 load_category_children(_Config) ->
 	ok = graphdb_bootstrap:load(),
-	{atomic, Children} = mnesia:transaction(fun() ->
-		mnesia:index_read(nodes, 1, #node.parent)
+	{atomic, Arcs} = mnesia:transaction(fun() ->
+		mnesia:index_read(relationships, 1, #relationship.source_nref)
 	end),
-	ChildNrefs = lists:sort([N#node.nref || N <- Children]),
+	ChildNrefs = lists:sort([A#relationship.target_nref ||
+		A <- Arcs,
+		A#relationship.kind =:= composition,
+		A#relationship.characterization =:= 22]),
 	%% Root's children: Attributes(2), Classes(3), Languages(4), Projects(5)
 	?assertEqual([2, 3, 4, 5], ChildNrefs),
-	%% All are category nodes
-	?assert(lists:all(fun(N) -> N#node.kind =:= category end, Children)).
+	%% Each child node is a category and lists Root in its parents cache
+	{atomic, Children} = mnesia:transaction(fun() ->
+		[hd(mnesia:read(nodes, N)) || N <- ChildNrefs]
+	end),
+	?assert(lists:all(fun(N) -> N#node.kind =:= category end, Children)),
+	?assert(lists:all(fun(N) -> N#node.parents =:= [1] end, Children)).
 
 %%-----------------------------------------------------------------------------
 %% Verify relationship row structure for Root -> Attributes arc.
@@ -402,7 +428,7 @@ load_missing_nref_start(Config) ->
 	TmpDir = proplists:get_value(tmp_dir, Config),
 	BadFile = filename:join(TmpDir, "no_floor.terms"),
 	ok = file:write_file(BadFile,
-		"{node, 1, category, undefined, {17, \"Root\"}, []}.\n"),
+		"{node, 1, category, {17, \"Root\"}, []}.\n"),
 	application:set_env(seerstone_graph_db, bootstrap_file, BadFile),
 	Result = graphdb_bootstrap:load(),
 	?assertMatch({error, missing_nref_start}, Result).
@@ -415,7 +441,7 @@ load_nref_above_floor(Config) ->
 	BadFile = filename:join(TmpDir, "above_floor.terms"),
 	ok = file:write_file(BadFile,
 		"{nref_start, 10}.\n"
-		"{node, 10, category, undefined, {17, \"Root\"}, []}.\n"),
+		"{node, 10, category, {17, \"Root\"}, []}.\n"),
 	application:set_env(seerstone_graph_db, bootstrap_file, BadFile),
 	Result = graphdb_bootstrap:load(),
 	?assertMatch({error, {nref_not_below_floor, 10, 10}}, Result).

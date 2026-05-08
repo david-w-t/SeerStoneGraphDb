@@ -101,7 +101,8 @@
 -record(node, {
 	nref,					%% integer() -- primary key
 	kind,					%% category | attribute | class | instance | template
-	parent,					%% integer() | undefined (undefined = root only)
+	parents = [],			%% [integer()] -- cache of parent arcs (composition/taxonomy)
+	classes = [],			%% [integer()] -- cache of instantiation arcs (instances only)
 	attribute_value_pairs	%% [#{attribute => Nref, value => term()}]
 }).
 
@@ -417,7 +418,8 @@ ensure_seed(Name) ->
 %%-----------------------------------------------------------------------------
 find_attribute_by_name(ParentNref, Name) ->
 	F = fun() ->
-		Children = mnesia:index_read(nodes, ParentNref, #node.parent),
+		Children = downward_children_by_arc(ParentNref, ?ATTR_CHILD_ARC,
+			composition),
 		lists:search(fun(N) -> node_has_name(N, Name) end, Children)
 	end,
 	case mnesia:transaction(F) of
@@ -455,7 +457,7 @@ do_create_attribute(Name, ParentNref, ExtraAVPs) ->
 	Node = #node{
 		nref = Nref,
 		kind = attribute,
-		parent = ParentNref,
+		parents = [ParentNref],
 		attribute_value_pairs = [NameAVP | ExtraAVPs]
 	},
 	Id1 = nref_server:get_nref(),
@@ -520,12 +522,29 @@ do_list_attributes() ->
 %%-----------------------------------------------------------------------------
 do_list_children(ParentNref) ->
 	F = fun() ->
-		mnesia:index_read(nodes, ParentNref, #node.parent)
+		downward_children_by_arc(ParentNref, ?ATTR_CHILD_ARC, composition)
 	end,
 	case mnesia:transaction(F) of
 		{atomic, Nodes}   -> {ok, Nodes};
 		{aborted, Reason} -> {error, Reason}
 	end.
+
+
+%%-----------------------------------------------------------------------------
+%% downward_children_by_arc(ParentNref, ChildArc, RelKind) -> [#node{}]
+%%
+%% Replaces the retired #node.parent secondary index.  Reads outgoing
+%% arcs from ParentNref of the given Kind/characterization and
+%% dereferences each target nref to a node record.  Must run inside an
+%% active mnesia transaction.
+%%-----------------------------------------------------------------------------
+downward_children_by_arc(ParentNref, ChildArc, RelKind) ->
+	Arcs = mnesia:index_read(relationships, ParentNref,
+		#relationship.source_nref),
+	Nrefs = [A#relationship.target_nref || A <- Arcs,
+		A#relationship.kind =:= RelKind,
+		A#relationship.characterization =:= ChildArc],
+	lists:flatmap(fun(N) -> mnesia:read(nodes, N) end, Nrefs).
 
 
 %%-----------------------------------------------------------------------------

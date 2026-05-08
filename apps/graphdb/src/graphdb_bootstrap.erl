@@ -67,7 +67,8 @@
 -record(node, {
 	nref,					%% integer() — primary key
 	kind,					%% category | attribute | class | instance | template
-	parent,					%% integer() | undefined (undefined = root only)
+	parents = [],			%% [integer()] — cache of parent arcs (composition/taxonomy)
+	classes = [],			%% [integer()] — cache of instantiation arcs (instances only)
 	attribute_value_pairs	%% [#{attribute => Nref, value => term()}]
 }).
 
@@ -180,8 +181,7 @@ create_tables() ->
 	ok = create_table(nodes, [
 		{record_name, node},
 		{attributes, record_info(fields, node)},
-		{disc_copies, NodeList},
-		{index, [parent]}
+		{disc_copies, NodeList}
 	]),
 	ok = create_table(relationships, [
 		{record_name, relationship},
@@ -234,11 +234,35 @@ do_load() ->
 			ok = nref_server:set_floor(NrefStart),
 			ok = write_nodes(Nodes),
 			ok = write_relationships(Rels),
+			ok = rebuild_and_verify_caches(),
 			logger:info("graphdb_bootstrap: loaded ~p nodes, ~p relationship pairs",
 				[length(Nodes), length(Rels)]),
 			ok;
 		{error, Reason} ->
 			throw({error, {consult_failed, File, Reason}})
+	end.
+
+
+%%-----------------------------------------------------------------------------
+%% rebuild_and_verify_caches() -> ok
+%%
+%% After every node and arc has been written, populate each node's
+%% parents/classes cache from the authoritative arcs and confirm the
+%% resulting state satisfies the cache invariant.  A verify mismatch
+%% here is a fatal startup error: the bootstrap data is internally
+%% inconsistent.
+%%-----------------------------------------------------------------------------
+rebuild_and_verify_caches() ->
+	case graphdb_mgr:rebuild_caches() of
+		ok ->
+			case graphdb_mgr:verify_caches() of
+				ok ->
+					ok;
+				{error, Mismatches} ->
+					throw({error, {bootstrap_cache_invariant_failed, Mismatches}})
+			end;
+		{error, Reason} ->
+			throw({error, {rebuild_caches_failed, Reason}})
 	end.
 
 
@@ -273,7 +297,7 @@ classify_terms([{nref_start, N} | _Rest], undefined, _Nodes, _Rels) ->
 	throw({error, {invalid_nref_start, N}});
 classify_terms([{nref_start, _} | _Rest], _Already, _Nodes, _Rels) ->
 	throw({error, duplicate_nref_start});
-classify_terms([{node, _, _, _, _, _} = Node | Rest], NrefStart, Nodes, Rels) ->
+classify_terms([{node, _, _, _, _} = Node | Rest], NrefStart, Nodes, Rels) ->
 	classify_terms(Rest, NrefStart, [Node | Nodes], Rels);
 classify_terms([{relationship, _, _, _, _, _, _, _} = Rel | Rest], NrefStart, Nodes, Rels) ->
 	classify_terms(Rest, NrefStart, Nodes, [Rel | Rels]);
@@ -289,7 +313,7 @@ classify_terms([Unknown | _Rest], _NrefStart, _Nodes, _Rels) ->
 %% Within the same kind, preserves file order (stable sort).
 %%-----------------------------------------------------------------------------
 sort_nodes_by_kind(Nodes) ->
-	lists:sort(fun({node, _, KindA, _, _, _}, {node, _, KindB, _, _, _}) ->
+	lists:sort(fun({node, _, KindA, _, _}, {node, _, KindB, _, _}) ->
 		kind_order(KindA) =< kind_order(KindB)
 	end, Nodes).
 
@@ -307,7 +331,7 @@ kind_order(template)  -> 5.
 %% and every kind is one of the five legal atoms.
 %%-----------------------------------------------------------------------------
 validate(NrefStart, Nodes) ->
-	lists:foreach(fun({node, Nref, Kind, _Parent, _Name, _AVPs}) ->
+	lists:foreach(fun({node, Nref, Kind, _Name, _AVPs}) ->
 		case Kind of
 			category  -> ok;
 			attribute -> ok;
@@ -368,13 +392,14 @@ write_nodes(Nodes) ->
 %% The {NameAttrNref, NameValue} pair becomes the first AVP entry;
 %% the [{AttrNref, Value}] shorthand is expanded to map AVPs.
 %%-----------------------------------------------------------------------------
-term_to_node({node, Nref, Kind, Parent, {NameAttrNref, NameValue}, ExtraAVPs}) ->
+term_to_node({node, Nref, Kind, {NameAttrNref, NameValue}, ExtraAVPs}) ->
 	NameAVP = #{attribute => NameAttrNref, value => NameValue},
 	Extras = [#{attribute => A, value => V} || {A, V} <- ExtraAVPs],
 	#node{
 		nref = Nref,
 		kind = Kind,
-		parent = Parent,
+		parents = [],
+		classes = [],
 		attribute_value_pairs = [NameAVP | Extras]
 	}.
 

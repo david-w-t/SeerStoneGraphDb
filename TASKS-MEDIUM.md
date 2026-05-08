@@ -62,39 +62,24 @@ later signature change.
 
 ---
 
-## M2. `resolve_from_class` should consult `graphdb_class`, not Mnesia directly
+## M2. `resolve_from_class` should consult `graphdb_class`, not Mnesia directly — RESOLVED
 
-**Evidence:** `graphdb_instance.erl:564-587` reads class data via
-`mnesia:read(nodes, ClassNref)` rather than calling
-`graphdb_class:get_class/1`. Worker boundaries blur — `graphdb_instance`
-hardcodes `?CLASS_MEMBERSHIP_ARC` and the class node layout.
-
-**Fix:** subsumed by H1. Once `resolve_from_class` walks the taxonomy,
-it should ask `graphdb_class` for the chain rather than re-implementing
-Mnesia reads.
-
-**Dependencies:** H1.
+**Status:** Closed by H1. `resolve_from_class` now drives the class
+walk through `graphdb_class:get_class/1` and
+`graphdb_class:ancestors/1` instead of reading the `nodes` table
+directly; the membership arc lookup reuses `do_class_of/1` so
+`?CLASS_MEMBERSHIP_ARC` is no longer hard-coded inside the resolver.
 
 ---
 
-## M1. PART-OF stored in two places with no consistency invariant
+## M1. PART-OF stored in two places with no consistency invariant — RESOLVED
 
-**Evidence:** `graphdb_instance.erl:326-386`. `create_instance` writes
-`node.parent = ParentNref` AND a 27/28 arc pair. No invariant check;
-nothing prevents the two from diverging.
-
-**Decision needed:** is `node.parent` a denormalized cache of the 27-arc,
-or are the arcs themselves the cache?
-
-**Recommended:** treat `node.parent` as the cache (it's there for the
-O(1) `mnesia:index_read(nodes, _, #node.parent)` lookup). Document the
-invariant and add an assertion in tests. Any future re-parent or delete
-operation must update both. (Single compositional parent only; multiple
-compositional parents are flagged as a smell in §6 and intentionally
-not supported.)
-
-**Dependencies:** none. Decide and write down before implementing
-delete or re-parent operations.
+**Status:** Closed by H0 (`TASKS-HIGH.md`). The decision: arcs are
+authoritative, `node.parents`/`node.classes` are caches with a hard
+invariant enforced by `graphdb_mgr:verify_caches/0` (run in every CT
+`end_per_testcase` and at bootstrap load completion). Single-writer
+ownership rule documented in `arcs-authoritative.md` and
+`ARCHITECTURE.md` §3.
 
 ---
 

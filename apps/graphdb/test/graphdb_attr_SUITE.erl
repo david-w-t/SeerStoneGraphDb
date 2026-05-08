@@ -28,7 +28,8 @@
 -record(node, {
 	nref,
 	kind,
-	parent,
+	parents = [],
+	classes = [],
 	attribute_value_pairs
 }).
 
@@ -163,7 +164,8 @@ setup_isolated_env(Config) ->
 %%-----------------------------------------------------------------------------
 %% end_per_testcase/2
 %%-----------------------------------------------------------------------------
-end_per_testcase(_TC, Config) ->
+end_per_testcase(TC, Config) ->
+	verify_cache_invariant(TC),
 	catch gen_server:stop(graphdb_attr),
 	catch gen_server:stop(graphdb_mgr),
 	catch application:stop(nref),
@@ -180,6 +182,22 @@ end_per_testcase(_TC, Config) ->
 	application:unset_env(seerstone_graph_db, bootstrap_file),
 	application:unset_env(mnesia, dir),
 	ok.
+
+%% Asserts the "arcs authoritative; lists cached" invariant after each
+%% testcase.  A failed verify is a fatal CT failure -- it indicates a
+%% write path bug, not correctable drift.
+verify_cache_invariant(TC) ->
+	case mnesia:system_info(is_running) of
+		yes ->
+			case graphdb_mgr:verify_caches() of
+				ok -> ok;
+				{error, Mismatches} ->
+					ct:pal("Cache invariant failed in ~p:~n~p",
+						[TC, Mismatches]),
+					ct:fail({cache_invariant_failed, TC, Mismatches})
+			end;
+		_ -> ok
+	end.
 
 
 %%=============================================================================
@@ -205,7 +223,7 @@ seeds_created_on_first_start(_Config) ->
 	lists:foreach(fun(N) ->
 		{ok, Node} = graphdb_attr:get_attribute(N),
 		?assertEqual(attribute, Node#node.kind),
-		?assertEqual(7, Node#node.parent)
+		?assertEqual([7], Node#node.parents)
 	end, [Lt, Tk, Ra]).
 
 %%-----------------------------------------------------------------------------
@@ -281,7 +299,7 @@ create_name_attribute_basic(_Config) ->
 	{ok, Nref} = graphdb_attr:create_name_attribute("TestName"),
 	{ok, Node} = graphdb_attr:get_attribute(Nref),
 	?assertEqual(attribute, Node#node.kind),
-	?assertEqual(6, Node#node.parent),
+	?assertEqual([6], Node#node.parents),
 	?assertEqual([#{attribute => 18, value => "TestName"}],
 		Node#node.attribute_value_pairs).
 
@@ -294,7 +312,7 @@ create_literal_attribute_stores_type(_Config) ->
 	{ok, #{literal_type := Lt}} = graphdb_attr:seeded_nrefs(),
 	{ok, Nref} = graphdb_attr:create_literal_attribute("Weight", kilogram),
 	{ok, Node} = graphdb_attr:get_attribute(Nref),
-	?assertEqual(7, Node#node.parent),
+	?assertEqual([7], Node#node.parents),
 	AVPs = Node#node.attribute_value_pairs,
 	?assert(lists:member(#{attribute => 18, value => "Weight"}, AVPs)),
 	?assert(lists:member(#{attribute => Lt, value => kilogram}, AVPs)).
@@ -313,8 +331,8 @@ create_relationship_attribute_pair(_Config) ->
 
 	{ok, Fwd} = graphdb_attr:get_attribute(FwdNref),
 	{ok, Rev} = graphdb_attr:get_attribute(RevNref),
-	?assertEqual(8, Fwd#node.parent),
-	?assertEqual(8, Rev#node.parent),
+	?assertEqual([8], Fwd#node.parents),
+	?assertEqual([8], Rev#node.parents),
 	?assert(lists:member(#{attribute => 18, value => "Makes"},
 		Fwd#node.attribute_value_pairs)),
 	?assert(lists:member(#{attribute => 18, value => "MadeBy"},
@@ -340,7 +358,7 @@ create_relationship_type_basic(_Config) ->
 	{ok, _} = graphdb_attr:start_link(),
 	{ok, Nref} = graphdb_attr:create_relationship_type("Ownership"),
 	{ok, Node} = graphdb_attr:get_attribute(Nref),
-	?assertEqual(8, Node#node.parent),
+	?assertEqual([8], Node#node.parents),
 	?assertEqual([#{attribute => 18, value => "Ownership"}],
 		Node#node.attribute_value_pairs).
 

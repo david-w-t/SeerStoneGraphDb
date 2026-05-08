@@ -4,25 +4,25 @@
 > implementation progresses within an already-described component. The canonical
 > spec is [`the-knowledge-network.md`](the-knowledge-network.md); the kernel
 > implements that model. Outstanding work is grouped by severity in
-> `TASKS-CRITICAL.md`, `TASKS-HIGH.md`, `TASKS-MEDIUM.md`, and `TASKS-LOW.md`.
+> `TASKS-HIGH.md`, `TASKS-MEDIUM.md`, and `TASKS-LOW.md`.
 
 ---
 
 ## 1. Status
 
-| Component           | State                                                                                                   |
-| ------------------- | ------------------------------------------------------------------------------------------------------- |
-| Build               | Compiles clean — zero warnings (OTP 27 / rebar3 3.24)                                                   |
-| `nref` subsystem    | Fully implemented; DETS-backed; `set_floor/1` API                                                       |
-| `dictionary_imp`    | Implemented; not yet wired to `dictionary_server` / `term_server`                                       |
-| `graphdb_bootstrap` | Implemented — Mnesia schema, table creation, scaffold loader                                            |
-| `graphdb_mgr`       | Implemented — bootstrap startup, read API, category guard. Write-side delegation pending.               |
-| `graphdb_attr`      | Implemented — attribute library (name, literal, relationship attributes)                                |
-| `graphdb_class`     | Implemented — taxonomic hierarchy (single inheritance only — see §10)                                   |
-| `graphdb_instance`  | Implemented — compositional hierarchy + four-level inheritance (single class membership only — see §10) |
-| `graphdb_rules`     | Stub                                                                                                    |
-| `graphdb_language`  | Stub                                                                                                    |
-| Tests               | 156 passing (94 Common Test + 62 EUnit)                                                                 |
+| Component           | State                                                                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Build               | Compiles clean — zero warnings (OTP 27 / rebar3 3.24)                                                         |
+| `nref` subsystem    | Fully implemented; DETS-backed; `set_floor/1` API                                                             |
+| `dictionary_imp`    | Implemented; not yet wired to `dictionary_server` / `term_server`                                             |
+| `graphdb_bootstrap` | Implemented — Mnesia schema, table creation, scaffold loader                                                  |
+| `graphdb_mgr`       | Implemented — bootstrap startup, read API, category guard, cache audit/repair. Write-side delegation pending. |
+| `graphdb_attr`      | Implemented — attribute library (name, literal, relationship attributes)                                      |
+| `graphdb_class`     | Implemented — taxonomic hierarchy (single inheritance only — see §10)                                         |
+| `graphdb_instance`  | Implemented — compositional hierarchy + four-level inheritance (single class membership only — see §10)       |
+| `graphdb_rules`     | Stub                                                                                                          |
+| `graphdb_language`  | Stub                                                                                                          |
+| Tests               | 186 passing (122 Common Test + 64 EUnit)                                                                      |
 
 The kernel is functional under single-class-membership / single-inheritance
 semantics. Multi-inheritance, template-scoped connections, and
@@ -49,9 +49,11 @@ Two tables cover the entire graph. Bidirectional logical edges are stored
 as two directed rows in `relationships`, written atomically.
 
 **Indexes:**
-- `nodes` — secondary on `parent` for O(1) `children/1`.
 - `relationships` — secondary on `source_nref` and `target_nref` for O(1)
   forward and reverse traversal.
+- `nodes` carries no secondary index. Downward queries ("children of X")
+  read outgoing arcs from `relationships` filtered by kind +
+  characterization (see §3 cache invariant).
 
 Embedding relationships inside the node record (Dallas's original DETS
 design) is rejected: it makes reverse-lookup an O(N) full-scan and
@@ -65,7 +67,8 @@ prevents transactional updates spanning both endpoints.
 -record(node, {
   nref,                   %% integer() — primary key
   kind,                   %% category | attribute | class | instance | template
-  parent,                 %% integer() | undefined  (undefined = root only)
+  parents = [],           %% [integer()] — cache of parent arcs (composition/taxonomy)
+  classes = [],           %% [integer()] — cache of instantiation arcs (instances only)
   attribute_value_pairs   %% [#{attribute => Nref, value => term()}]
 }).
 ```
@@ -78,14 +81,57 @@ prevents transactional updates spanning both endpoints.
 | `attribute` | Named concept used as an arc label, name attribute, or literal attribute descriptor | Yes                     |
 | `class`     | Type/schema; manages the taxonomic ("is a") hierarchy                               | Yes                     |
 | `instance`  | Concrete entity in a project; managed by the compositional ("part of") hierarchy    | Yes                     |
+| `template`  | Named semantic context attached to a class; scopes connection arcs (see §4)         | Yes                     |
 
 `category` immutability is enforced by `graphdb_mgr:check_category_guard/1`;
 no runtime API can create, modify, or delete a `category` node.
 
+### Cache invariant: arcs authoritative; lists cached
+
+`parents` and `classes` are **caches** of the authoritative arcs in the
+`relationships` table. The decision record is
+[`arcs-authoritative.md`](arcs-authoritative.md); the rules are:
+
+  1. Every taxonomic, compositional, and instantiation relationship is
+     canonical in `relationships`.
+  2. `node.parents` and `node.classes` are reconstructable from those
+     arcs at any time. They exist purely so reads that need only the
+     "who are my parents / classes" structure can skip the relationship
+     index.
+  3. A cache that disagrees with the arcs is a fatal error, not
+     correctable drift.
+
+Cache field sources:
+
+| Cache field    | Authoritative arcs                               | Owner worker                                                           |
+| -------------- | ------------------------------------------------ | ---------------------------------------------------------------------- |
+| `node.parents` | 21/22 composition (category)                     | `graphdb_bootstrap` (writes); `graphdb_mgr:rebuild_caches/0` populates |
+| `node.parents` | 23/24 composition (attribute)                    | `graphdb_attr`                                                         |
+| `node.parents` | 25/26 taxonomy (class) or composition (template) | `graphdb_class`                                                        |
+| `node.parents` | 27/28 composition (instance)                     | `graphdb_instance`                                                     |
+| `node.classes` | 29 instantiation (instance → class)              | `graphdb_instance`                                                     |
+
+Each owner worker writes the arcs and the matching cache update inside
+one `mnesia:transaction/1`. Other workers never touch the table
+directly — they call the owner's API.
+
+`graphdb_mgr` exposes two audit/repair APIs:
+
+| Function           | Purpose                                                                              |
+| ------------------ | ------------------------------------------------------------------------------------ |
+| `verify_caches/0`  | Scans every node; returns `ok` or `{error, [{Nref, Field, Expected, Actual}, ...]}`. |
+| `rebuild_caches/0` | Rewrites every node's caches from the arcs in one transaction.                       |
+
+CT enforcement: every test suite calls `verify_caches/0` in
+`end_per_testcase`. A failed verify is a fatal CT failure. The
+bootstrap loader runs `rebuild_caches/0` followed by `verify_caches/0`
+once all rows are written; a mismatch throws
+`{bootstrap_cache_invariant_failed, Mismatches}` and aborts startup.
+
 ### Root and bootstrap scaffold
 
-The root node is `nref = 1`, `kind = category`, `parent = undefined`. It is
-the only node in the database with `parent = undefined`.
+The root node is `nref = 1`, `kind = category`, `parents = []`. It is
+the only node in the database with an empty parents list.
 
 Five top-level categories are pre-assigned at bootstrap:
 
@@ -271,9 +317,13 @@ Erlang terms via `file:consult/1`. Three term shapes (full schema in
 
 ```erlang
 {nref_start, N}.
-{node, Nref, Kind, ParentNref, {NameAttrNref, NameValue}, ExtraAVPs}.
-{relationship, N1, R1, AVPs1, R2, N2, AVPs2}.
+{node, Nref, Kind, {NameAttrNref, NameValue}, ExtraAVPs}.
+{relationship, N1, R1, AVPs1, R2, N2, AVPs2, Kind}.
 ```
+
+Hierarchy is encoded *only* in the relationship arcs — the node tuple
+carries no parent field. Per-arc inline `%%` comments make the file
+readable top-to-bottom.
 
 Erlang Terms chosen over JSON / XML / custom DSL for zero added
 dependencies and direct pattern matching.
@@ -284,8 +334,14 @@ dependencies and direct pattern matching.
 tables if absent, loads scaffold only if `nodes` is empty. Called from
 `graphdb_mgr:init/1`. Processing order: floor directive → category
 nodes → attribute nodes → class nodes → instance nodes →
-relationships. Relationship IDs are allocated outside the Mnesia
-transaction to avoid retry side-effects.
+relationships → cache rebuild + verify (see §3). Relationship IDs are
+allocated outside the Mnesia transaction to avoid retry side-effects.
+
+After all nodes and arcs are written the loader calls
+`graphdb_mgr:rebuild_caches/0` followed by
+`graphdb_mgr:verify_caches/0`. A verify mismatch throws
+`{bootstrap_cache_invariant_failed, Mismatches}` as a fatal startup
+error: it means the bootstrap data is internally inconsistent.
 
 `category` writes are permitted only inside `graphdb_bootstrap`. After
 the loader finishes, `graphdb_mgr` rejects any runtime request to
@@ -299,17 +355,19 @@ create, modify, or delete a `category` node.
 order from [`the-knowledge-network.md`](the-knowledge-network.md) §6:
 
 1. **Local AVPs** on the instance — highest.
-2. **Class-bound values** — values explicitly bound at the class.
-3. **Compositional ancestors** — unbroken upward walk via `node.parent`.
-4. **Directly connected nodes** — one level deep — lowest.
+2. **Class-bound values** — class itself plus its taxonomic ancestor
+   chain (nearest first).
+3. **Compositional ancestors** — unbroken upward walk via the
+   `node.parents` cache (single-chain today; H3 will add multi-parent
+   DAG traversal).
+4. **Directly connected nodes** — `kind = connection` arcs only, one
+   level deep — lowest.
 
 Each level is consulted only if higher levels returned `not_found`.
 
-The current implementation has known correctness gaps documented in
-`TASKS-HIGH.md`: Priority 2 does not walk the class taxonomy (H1),
-Priority 4 does not exclude already-walked hierarchical arcs (H2), and
-multi-class membership is silently disambiguated by Mnesia ordering
-(H5).
+The current implementation supports single class membership; resolver
+gaps for multi-class disambiguation are tracked in `TASKS-HIGH.md` H5,
+which lands alongside the H4 multi-membership API.
 
 ---
 
@@ -321,11 +379,13 @@ severity-grouped task files.
 ### Multi-inheritance representation
 
 The spec (§5) requires multiple class inheritance and multiple instance
-class membership. The current representation puts the single primary
-parent in `node.parent`; additional parents must live in the
-relationships table only. The `graphdb_class` ancestor walk and
-`graphdb_instance.resolve_from_class` need to traverse via arcs rather
-than the single parent field. See `TASKS-HIGH.md` H3, H4, H5.
+class membership. The schema infrastructure landed in H0:
+`node.parents` and `node.classes` are cache lists today, populated as
+length-1 lists for the single-parent / single-class cases.
+`graphdb_class:ancestors/1` and the `resolve_from_class` taxonomy walk
+already traverse via arcs; remaining work is the multi-parent /
+multi-class API surface and DAG semantics. See `TASKS-HIGH.md` H3, H4,
+H5.
 
 ### Multilingual storage
 
@@ -334,12 +394,3 @@ language-neutral concept storage with per-language labels resolved at
 render time. Two design options (per-language map AVPs vs. label
 nodes) are open; choice affects every node in the database. See
 `TASKS-MEDIUM.md` M6.
-
-### Composition: dual storage
-
-`node.parent` and the 27/28 arc rows both encode the compositional
-parent. There is no formal invariant that they stay synchronised. The
-arcs are needed for graph queries; the field provides O(1) index
-lookup. Either declare the field a denormalised cache (and assert the
-invariant in tests), or remove it and use the relationship index.
-Decision pending. See `TASKS-MEDIUM.md` M1.
