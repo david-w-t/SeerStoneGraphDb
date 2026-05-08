@@ -175,7 +175,9 @@ init_per_testcase(_TC, Config) ->
 %%
 %% Stops nref, stops Mnesia, restores cwd, and deletes the temp dir.
 %%-----------------------------------------------------------------------------
-end_per_testcase(_TC, Config) ->
+end_per_testcase(TC, Config) ->
+	verify_cache_invariant(TC),
+
 	%% Stop applications (ignore errors — they may not be running)
 	catch application:stop(nref),
 	catch mnesia:stop(),
@@ -197,6 +199,22 @@ end_per_testcase(_TC, Config) ->
 	application:unset_env(mnesia, dir),
 
 	ok.
+
+%% Asserts the "arcs authoritative; lists cached" invariant after each
+%% testcase.  A failed verify is a fatal CT failure -- it indicates a
+%% write path bug, not correctable drift.
+verify_cache_invariant(TC) ->
+	case mnesia:system_info(is_running) of
+		yes ->
+			case graphdb_mgr:verify_caches() of
+				ok -> ok;
+				{error, Mismatches} ->
+					ct:pal("Cache invariant failed in ~p:~n~p",
+						[TC, Mismatches]),
+					ct:fail({cache_invariant_failed, TC, Mismatches})
+			end;
+		_ -> ok
+	end.
 
 
 %%=============================================================================

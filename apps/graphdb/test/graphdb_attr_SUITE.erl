@@ -164,7 +164,8 @@ setup_isolated_env(Config) ->
 %%-----------------------------------------------------------------------------
 %% end_per_testcase/2
 %%-----------------------------------------------------------------------------
-end_per_testcase(_TC, Config) ->
+end_per_testcase(TC, Config) ->
+	verify_cache_invariant(TC),
 	catch gen_server:stop(graphdb_attr),
 	catch gen_server:stop(graphdb_mgr),
 	catch application:stop(nref),
@@ -181,6 +182,22 @@ end_per_testcase(_TC, Config) ->
 	application:unset_env(seerstone_graph_db, bootstrap_file),
 	application:unset_env(mnesia, dir),
 	ok.
+
+%% Asserts the "arcs authoritative; lists cached" invariant after each
+%% testcase.  A failed verify is a fatal CT failure -- it indicates a
+%% write path bug, not correctable drift.
+verify_cache_invariant(TC) ->
+	case mnesia:system_info(is_running) of
+		yes ->
+			case graphdb_mgr:verify_caches() of
+				ok -> ok;
+				{error, Mismatches} ->
+					ct:pal("Cache invariant failed in ~p:~n~p",
+						[TC, Mismatches]),
+					ct:fail({cache_invariant_failed, TC, Mismatches})
+			end;
+		_ -> ok
+	end.
 
 
 %%=============================================================================
