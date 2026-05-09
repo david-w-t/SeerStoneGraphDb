@@ -71,6 +71,11 @@
 	add_relationship_rejects_non_template_nref/1,
 	add_relationship_rejects_template_out_of_ancestry/1,
 	add_relationship_no_default_after_delete/1,
+	add_relationship_rejects_missing_source/1,
+	add_relationship_rejects_missing_target/1,
+	add_relationship_rejects_non_attribute_char/1,
+	add_relationship_rejects_non_attribute_reciprocal/1,
+	add_relationship_rejects_target_kind_mismatch/1,
 	class_of_returns_class/1,
 	%% Lookups
 	get_instance_returns_node/1,
@@ -140,6 +145,11 @@ groups() ->
 			add_relationship_rejects_non_template_nref,
 			add_relationship_rejects_template_out_of_ancestry,
 			add_relationship_no_default_after_delete,
+			add_relationship_rejects_missing_source,
+			add_relationship_rejects_missing_target,
+			add_relationship_rejects_non_attribute_char,
+			add_relationship_rejects_non_attribute_reciprocal,
+			add_relationship_rejects_target_kind_mismatch,
 			class_of_returns_class
 		]},
 		{lookups, [], [
@@ -505,6 +515,69 @@ add_relationship_no_default_after_delete(_Config) ->
 	end),
 	?assertEqual({error, no_default_template},
 		graphdb_instance:add_relationship(A, Char, B, Recip)).
+
+%%-----------------------------------------------------------------------------
+%% M3: missing source nref is rejected.
+%%-----------------------------------------------------------------------------
+add_relationship_rejects_missing_source(_Config) ->
+	{ok, ClassNref} = graphdb_class:create_class("Thing", 3),
+	{ok, B} = graphdb_instance:create_instance("B", ClassNref, 5),
+	{ok, {Char, Recip}} =
+		graphdb_attr:create_relationship_attribute("Knows", "KnownBy", instance),
+	?assertEqual({error, {source_not_found, 99999}},
+		graphdb_instance:add_relationship(99999, Char, B, Recip)).
+
+%%-----------------------------------------------------------------------------
+%% M3: missing target nref is rejected.
+%%-----------------------------------------------------------------------------
+add_relationship_rejects_missing_target(_Config) ->
+	{ok, ClassNref} = graphdb_class:create_class("Thing", 3),
+	{ok, A} = graphdb_instance:create_instance("A", ClassNref, 5),
+	{ok, {Char, Recip}} =
+		graphdb_attr:create_relationship_attribute("Knows", "KnownBy", instance),
+	?assertEqual({error, {target_not_found, 99999}},
+		graphdb_instance:add_relationship(A, Char, 99999, Recip)).
+
+%%-----------------------------------------------------------------------------
+%% M3: characterization that is not kind=attribute is rejected.  Uses
+%% the bootstrap Projects category (nref 5) as a non-attribute node.
+%%-----------------------------------------------------------------------------
+add_relationship_rejects_non_attribute_char(_Config) ->
+	{ok, ClassNref} = graphdb_class:create_class("Thing", 3),
+	{ok, A} = graphdb_instance:create_instance("A", ClassNref, 5),
+	{ok, B} = graphdb_instance:create_instance("B", ClassNref, 5),
+	{ok, {_Char, Recip}} =
+		graphdb_attr:create_relationship_attribute("Knows", "KnownBy", instance),
+	?assertMatch({error, {characterization_not_an_attribute, 5, category}},
+		graphdb_instance:add_relationship(A, 5, B, Recip)).
+
+%%-----------------------------------------------------------------------------
+%% M3: reciprocal that is not kind=attribute is rejected.
+%%-----------------------------------------------------------------------------
+add_relationship_rejects_non_attribute_reciprocal(_Config) ->
+	{ok, ClassNref} = graphdb_class:create_class("Thing", 3),
+	{ok, A} = graphdb_instance:create_instance("A", ClassNref, 5),
+	{ok, B} = graphdb_instance:create_instance("B", ClassNref, 5),
+	{ok, {Char, _Recip}} =
+		graphdb_attr:create_relationship_attribute("Knows", "KnownBy", instance),
+	?assertMatch({error, {reciprocal_not_an_attribute, 5, category}},
+		graphdb_instance:add_relationship(A, Char, B, 5)).
+
+%%-----------------------------------------------------------------------------
+%% M3: target whose kind disagrees with the characterization's
+%% target_kind AVP is rejected.  Char declares target_kind=class but the
+%% target is an instance.
+%%-----------------------------------------------------------------------------
+add_relationship_rejects_target_kind_mismatch(_Config) ->
+	{ok, ClassNref} = graphdb_class:create_class("Thing", 3),
+	{ok, A} = graphdb_instance:create_instance("A", ClassNref, 5),
+	{ok, B} = graphdb_instance:create_instance("B", ClassNref, 5),
+	%% target_kind=class, but B is an instance
+	{ok, {Char, Recip}} =
+		graphdb_attr:create_relationship_attribute("Has", "HeldBy", class),
+	?assertEqual({error, {target_kind_mismatch, class, instance}},
+		graphdb_instance:add_relationship(A, Char, B, Recip)).
+
 
 %%-----------------------------------------------------------------------------
 %% class_of returns the membership class via the instance->class arc.

@@ -112,6 +112,13 @@
 	avps					%% [#{attribute => Nref, value => term()}]
 }).
 
+-record(state, {
+	target_kind_avp_nref	%% integer() -- nref of the seeded `target_kind`
+							%% literal-attribute, cached from graphdb_attr
+							%% at init time and used by add_relationship
+							%% validation (M3).
+}).
+
 
 %%---------------------------------------------------------------------
 %% Exported Functions
@@ -307,7 +314,13 @@ resolve_value(InstanceNref, AttrNref) ->
 
 init([]) ->
 	logger:info("graphdb_instance: started"),
-	{ok, []}.
+	%% Cache the seeded `target_kind` literal-attribute nref from
+	%% graphdb_attr.  Used by add_relationship validation (M3) to check
+	%% that an arc's target node has the kind declared on the
+	%% characterization.  graphdb_attr is started before graphdb_instance
+	%% by graphdb_sup, so this call is safe at init time.
+	{ok, #{target_kind := TkAttr}} = graphdb_attr:seeded_nrefs(),
+	{ok, #state{target_kind_avp_nref = TkAttr}}.
 
 
 %%-----------------------------------------------------------------------------
@@ -317,7 +330,7 @@ handle_call({create_instance, Name, ClassNref, ParentNref}, _From, State) ->
 	{reply, do_create_instance(Name, ClassNref, ParentNref), State};
 
 handle_call({add_relationship, S, C, T, R, TemplateSpec}, _From, State) ->
-	{reply, do_add_relationship(S, C, T, R, TemplateSpec), State};
+	{reply, do_add_relationship(S, C, T, R, TemplateSpec, State), State};
 
 handle_call({add_class_membership, InstanceNref, ClassNref}, _From, State) ->
 	{reply, do_add_class_membership(InstanceNref, ClassNref), State};
@@ -502,30 +515,97 @@ do_validate_parent(ParentNref) ->
 
 %%-----------------------------------------------------------------------------
 %% do_add_relationship(SourceNref, CharNref, TargetNref, ReciprocalNref,
-%%                     TemplateSpec) -> ok | {error, term()}
+%%                     TemplateSpec, State) -> ok | {error, term()}
 %%
 %% TemplateSpec is either the atom `default` (look up source's class
-%% default template) or an integer template nref.  Validates the
-%% template's class is in the source's or target's class taxonomic
-%% ancestry, then atomically writes the two directed connection rows
-%% with the Template AVP stamped on each.
+%% default template) or an integer template nref.  M3 validation
+%% (existence + arc-label kind + target_kind agreement) runs first,
+%% then class lookup, template resolution, scope check, and the
+%% two-row write of the connection arcs with the Template AVP stamped
+%% on each.
 %%-----------------------------------------------------------------------------
 do_add_relationship(SourceNref, CharNref, TargetNref, ReciprocalNref,
-		TemplateSpec) ->
-	case resolve_arc_classes(SourceNref, TargetNref) of
-		{ok, SourceClass, TargetClass} ->
-			case resolve_template(TemplateSpec, SourceClass) of
-				{ok, TemplateNref} ->
-					case validate_template_scope(TemplateNref,
-							SourceClass, TargetClass) of
-						ok ->
-							write_connection_arcs(SourceNref, CharNref,
-								TargetNref, ReciprocalNref, TemplateNref);
+		TemplateSpec, State) ->
+	TkAttr = State#state.target_kind_avp_nref,
+	case validate_arc_endpoints(SourceNref, CharNref, TargetNref,
+			ReciprocalNref, TkAttr) of
+		ok ->
+			case resolve_arc_classes(SourceNref, TargetNref) of
+				{ok, SourceClass, TargetClass} ->
+					case resolve_template(TemplateSpec, SourceClass) of
+						{ok, TemplateNref} ->
+							case validate_template_scope(TemplateNref,
+									SourceClass, TargetClass) of
+								ok ->
+									write_connection_arcs(SourceNref,
+										CharNref, TargetNref,
+										ReciprocalNref, TemplateNref);
+								{error, _} = Err -> Err
+							end;
 						{error, _} = Err -> Err
 					end;
 				{error, _} = Err -> Err
 			end;
-		{error, _} = Err -> Err
+		{error, _} = Err ->
+			Err
+	end.
+
+
+%%-----------------------------------------------------------------------------
+%% validate_arc_endpoints(Source, Char, Target, Reciprocal, TkAttr) ->
+%%     ok | {error, term()}
+%%
+%% M3 validation.  Reads all four nodes inside one mnesia transaction
+%% and rejects:
+%%   - missing source / target / characterization / reciprocal
+%%   - characterization or reciprocal that is not kind=attribute
+%%   - target whose kind disagrees with the characterization's
+%%     `target_kind` AVP (the value stored under attribute=TkAttr)
+%%-----------------------------------------------------------------------------
+validate_arc_endpoints(SourceNref, CharNref, TargetNref, ReciprocalNref,
+		TkAttr) ->
+	F = fun() ->
+		Source = mnesia:read(nodes, SourceNref),
+		Target = mnesia:read(nodes, TargetNref),
+		Char   = mnesia:read(nodes, CharNref),
+		Recip  = mnesia:read(nodes, ReciprocalNref),
+		{Source, Target, Char, Recip}
+	end,
+	case mnesia:transaction(F) of
+		{atomic, {[], _, _, _}} ->
+			{error, {source_not_found, SourceNref}};
+		{atomic, {_, [], _, _}} ->
+			{error, {target_not_found, TargetNref}};
+		{atomic, {_, _, [], _}} ->
+			{error, {characterization_not_found, CharNref}};
+		{atomic, {_, _, _, []}} ->
+			{error, {reciprocal_not_found, ReciprocalNref}};
+		{atomic, {[_], [#node{kind = TKind}], [#node{kind = CKind} = CharNode],
+				[#node{kind = RKind}]}} ->
+			case {CKind, RKind} of
+				{attribute, attribute} ->
+					check_target_kind(CharNode, TKind, TkAttr);
+				{attribute, _} ->
+					{error, {reciprocal_not_an_attribute, ReciprocalNref,
+						RKind}};
+				{_, _} ->
+					{error, {characterization_not_an_attribute, CharNref,
+						CKind}}
+			end;
+		{aborted, Reason} ->
+			{error, Reason}
+	end.
+
+check_target_kind(#node{attribute_value_pairs = AVPs}, ActualKind, TkAttr) ->
+	case find_avp_value(AVPs, TkAttr) of
+		not_found ->
+			%% No target_kind AVP on the arc-label -- legacy or relationship-
+			%% type bucket node; skip the kind check.
+			ok;
+		{ok, ActualKind} ->
+			ok;
+		{ok, ExpectedKind} ->
+			{error, {target_kind_mismatch, ExpectedKind, ActualKind}}
 	end.
 
 
