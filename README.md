@@ -28,7 +28,7 @@ underway:
 | `graphdb_rules`        | Gen_server stub — deferred to Enhancements (pattern recognition, relationship constraints)                                                                                                                     |
 | `graphdb_language`     | Gen_server stub — next to implement (Task 6)                                                                                                                                                                   |
 
-**218 tests** (64 EUnit + 154 Common Test) — all passing. See
+**228 tests** (64 EUnit + 164 Common Test) — all passing. See
 `TASKS-MEDIUM.md` and `TASKS-LOW.md` for the prioritised task list
 (organised by severity).
 
