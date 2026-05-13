@@ -136,6 +136,7 @@ Relationships are stored in a separate Mnesia table (not embedded in node record
 ```erlang
 -record(relationship, {
   id,               %% integer() — primary key (nref allocated normally)
+  kind,             %% taxonomy | composition | connection | instantiation
   source_nref,      %% integer() — arc origin
   characterization, %% integer() — arc label (an attribute nref from environment)
   target_nref,      %% integer() — arc target (environment or project per target_kind)
@@ -271,7 +272,7 @@ All six worker modules (`graphdb_mgr`, `graphdb_rules`, `graphdb_attr`, `graphdb
 
 ## Key Design Notes
 
-- `graphdb_sup` receives `StartArgs` from `database:start/2`, unlike `seerstone_sup` which takes no args
+- `graphdb_sup:start_link/0` takes no args, matching every supervisor in the umbrella. `graphdb_sup` is started by `database_sup`'s childspec via the zero-arg `{graphdb_sup, start_link, []}` form, not by `graphdb:start/2`.
 - `graphdb_bootstrap`, `graphdb_mgr` (startup + read API), `graphdb_attr`, `graphdb_class`, and `graphdb_instance` are implemented. Remaining work is grouped by severity in `TASKS-MEDIUM.md` and `TASKS-LOW.md` at the project root.
 - Consult `the-knowledge-network.md` for the full model spec before implementing
 
