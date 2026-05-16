@@ -40,8 +40,6 @@ SeerStoneGraphDb/
 ├── rebar.lock         # Locked dependency versions
 ├── Makefile           # Convenience targets (compile, shell, release, clean, rebar3)
 ├── ARCHITECTURE.md    # High-level architecture; kept current with the code
-├── TASKS-MEDIUM.md    # Semantic departures + query language + rules engine
-├── TASKS-LOW.md       # Polish, perf, OTP plumbing, dictionary wiring
 └── CLAUDE.md          # This file
 ```
 
@@ -51,7 +49,7 @@ SeerStoneGraphDb/
 `application_master` in dependency order from `seerstone.app.src`'s
 `applications:` list. `graphdb` and `dictionary` are `included_applications`
 of `database` (legacy 2008 idiom; modernization tracked as
-`TASKS-LOW.md` E5).
+`TASKS.md` E5).
 
 ```
 nref (application — started first)
@@ -148,15 +146,15 @@ Two database roles:
 | **Ontology**                 | All category, attribute, class, and language nodes; bootstrap scaffold; arc label definitions | Category nodes: immutable (bootstrap-only). All other nodes grow freely at runtime. |
 | **Project (instance space)** | Instance nodes and their relationships; one database per project                              | Fully mutable at runtime                                                            |
 
-The environment is shared across all projects. Only bootstrap nrefs (1–31) and a small number of explicitly seeded runtime nrefs (e.g., `target_kind`) are referenced by nref constant in code — all other runtime-added nodes are treated generically.
+The environment is shared across all projects. Only bootstrap nrefs (1–35) and a small number of explicitly seeded runtime nrefs (e.g., `target_kind`) are referenced by nref constant in code — all other runtime-added nodes are treated generically.
 
 nref spaces:
-- **Environment**: bootstrap nrefs 1–30; runtime nrefs 10000+ (protected by `{nref_start, 10000}` in `bootstrap.terms`)
+- **Environment**: bootstrap nrefs 1–35; runtime nrefs 10000+ (protected by `{nref_start, 10000}` in `bootstrap.terms`)
 - **Project**: allocator starts at **1** — no pre-assigned nrefs, no bootstrap file, no floor needed
 
 Cross-database nref resolution: `characterization` and `reciprocal` fields always reference environment nrefs; `target_nref` is routed to environment or project based on the arc label's `target_kind` AVP stored in the environment attribute library.
 
-### Bootstrap Nref Quick-Reference (BFS, nrefs 1–31)
+### Bootstrap Nref Quick-Reference (BFS, nrefs 1–35)
 
 ```
  1  Root (category)
@@ -190,6 +188,10 @@ Cross-database nref resolution: `characterization` and `reciprocal` fields alway
 29      Class  — instance→class membership arc (parent: 16)
 30      Instance — class→instances membership arc (parent: 16)
 31      Template — Connection-arc scope AVP marker (parent: 16)
+32      Human Languages  — Language subcategory (parent: 4)
+33      Formal Languages  — Language subcategory (parent: 4)
+34      Diagram Languages — Language subcategory (parent: 4)
+35      Renderers         — Language subcategory (parent: 4)
 ```
 
 NameAttrNref quick-reference: category=17, attribute=18, class=19, instance=20
@@ -264,21 +266,18 @@ A logical bidirectional edge is two `relationship` rows written atomically (one 
 
 These are outstanding items — all previously known bugs have been fixed.
 
-- **graphdb worker modules** — `graphdb_language` is a gen_server stub (TASKS-MEDIUM Task 6); `graphdb_rules` is a stub (TASKS-MEDIUM E1)
+- **graphdb worker modules** — `graphdb_language` is a gen_server stub (TASKS.md F3); `graphdb_rules` is a stub (TASKS.md F4)
 - **`graphdb_mgr` write operations** — `create_attribute/3`, `create_class/2`, `create_instance/3`, `add_relationship/4`, `delete_node/1`, `update_node_avps/2` return `{error, not_implemented}` pending L4 routing work
-- **`dictionary_server` and `term_server`** — stubs not yet wired to `dictionary_imp` (TASKS-LOW Task 7)
-- **`seerstone:start/2` and `nref:start/2`**, **`code_change/3`** — deferred (TASKS-LOW E2, E3)
+- **`dictionary_server` and `term_server`** — stubs not yet wired to `dictionary_imp` (TASKS.md Task 7)
+- **`seerstone:start/2` and `nref:start/2`**, **`code_change/3`** — deferred (TASKS.md E2, E3)
 - **App lifecycle callbacks** — `start_phase/3`, `prep_stop/1`, `stop/1`, `config_change/3` return `ok` (no-op) across all five app modules; correct for current deployment model
 
 ## Remaining Work
 
-Remaining tasks are organised by severity in two files:
-`TASKS-MEDIUM.md` and `TASKS-LOW.md`. Medium covers semantic gaps plus
-the query language (Task 6) and rules engine (E1). Low covers polish,
-performance, OTP plumbing, and dictionary wiring (Task 7). Critical
-schema-level work is complete (PR #9, commit `ce2e281`); the
+Remaining tasks are in `TASKS.md` (feature phases F1–F4 and
+Engineering Hygiene). Critical schema-level work is complete (PR #9);
 high-severity inheritance/membership correctness work landed in PR
-#12 (commit `61c5488`).
+#12.
 
 ## Configuration
 
@@ -333,8 +332,7 @@ detail.
 - Implementation progress within an already-described component.
 
 The canonical spec is `the-knowledge-network.md` — it does **not** track
-the code. Outstanding work lives in `TASKS-MEDIUM.md` and
-`TASKS-LOW.md`.
+the code. Outstanding work lives in `TASKS.md`.
 
 ## Storage Technologies Used
 

@@ -62,6 +62,7 @@
 	load_root_node_correct/1,
 	load_attribute_node_correct/1,
 	load_template_avp_node_correct/1,
+	load_language_subcategories/1,
 	load_category_children/1,
 	load_relationship_structure/1,
 	load_relationship_ids_above_floor/1,
@@ -95,6 +96,7 @@ groups() ->
 			load_root_node_correct,
 			load_attribute_node_correct,
 			load_template_avp_node_correct,
+			load_language_subcategories,
 			load_category_children,
 			load_relationship_structure,
 			load_relationship_ids_above_floor,
@@ -226,18 +228,18 @@ load_creates_tables(_Config) ->
 	?assert(lists:member(relationships, mnesia:system_info(tables))).
 
 %%-----------------------------------------------------------------------------
-%% Verify exactly 31 nodes are loaded (1-30 plus the Template AVP at 31).
+%% Verify exactly 35 nodes are loaded (nrefs 1–31 plus Language subcategories 32–35).
 %%-----------------------------------------------------------------------------
 load_writes_all_nodes(_Config) ->
 	ok = graphdb_bootstrap:load(),
-	?assertEqual(31, mnesia:table_info(nodes, size)).
+	?assertEqual(35, mnesia:table_info(nodes, size)).
 
 %%-----------------------------------------------------------------------------
-%% Verify exactly 60 relationship rows (30 pairs x 2 directions).
+%% Verify exactly 68 relationship rows (34 pairs x 2 directions).
 %%-----------------------------------------------------------------------------
 load_writes_all_relationships(_Config) ->
 	ok = graphdb_bootstrap:load(),
-	?assertEqual(60, mnesia:table_info(relationships, size)).
+	?assertEqual(68, mnesia:table_info(relationships, size)).
 
 %%-----------------------------------------------------------------------------
 %% Verify the root node (nref 1) has correct structure.
@@ -282,6 +284,37 @@ load_template_avp_node_correct(_Config) ->
 	?assertEqual([16], Node#node.parents),    %% Instance Relationships subtree
 	?assertEqual([#{attribute => 18, value => "Template"}],
 		Node#node.attribute_value_pairs).
+
+%%-----------------------------------------------------------------------------
+%% Verify the four Language subcategory nodes (nrefs 32-35) under Languages (4).
+%%-----------------------------------------------------------------------------
+load_language_subcategories(_Config) ->
+	ok = graphdb_bootstrap:load(),
+	Expected = [
+		{32, "Human Languages"},
+		{33, "Formal Languages"},
+		{34, "Diagram Languages"},
+		{35, "Renderers"}
+	],
+	lists:foreach(fun({Nref, Name}) ->
+		{atomic, [Node]} = mnesia:transaction(fun() ->
+			mnesia:read(nodes, Nref)
+		end),
+		?assertEqual(Nref,     Node#node.nref),
+		?assertEqual(category, Node#node.kind),
+		?assertEqual([4],      Node#node.parents),
+		?assertEqual([#{attribute => 17, value => Name}],
+			Node#node.attribute_value_pairs)
+	end, Expected),
+	%% Languages (nref 4) has exactly these four children via char=22 (Child/CatRel)
+	{atomic, ChildArcs} = mnesia:transaction(fun() ->
+		mnesia:index_read(relationships, 4, #relationship.source_nref)
+	end),
+	ChildNrefs = lists:sort([A#relationship.target_nref ||
+		A <- ChildArcs,
+		A#relationship.kind =:= composition,
+		A#relationship.characterization =:= 22]),
+	?assertEqual([32, 33, 34, 35], ChildNrefs).
 
 %%-----------------------------------------------------------------------------
 %% Verify Root's children via the compositional arcs (char=22, kind=composition).
@@ -329,7 +362,7 @@ load_relationship_ids_above_floor(_Config) ->
 	{atomic, AllRels} = mnesia:transaction(fun() ->
 		mnesia:foldl(fun(Rec, Acc) -> [Rec | Acc] end, [], relationships)
 	end),
-	?assertEqual(60, length(AllRels)),
+	?assertEqual(68, length(AllRels)),
 	BelowFloor = [R || R <- AllRels, R#relationship.id < 10000],
 	?assertEqual([], BelowFloor).
 
@@ -360,10 +393,10 @@ load_relationship_reciprocal_pairs(_Config) ->
 %%-----------------------------------------------------------------------------
 load_nref_floor_set(_Config) ->
 	ok = graphdb_bootstrap:load(),
-	%% 30 relationship pairs = 60 IDs consumed, starting at 10000
-	%% Next nref should be >= 10060
+	%% 34 relationship pairs = 68 IDs consumed, starting at 10000
+	%% Next nref should be >= 10068
 	NextNref = nref_server:get_nref(),
-	?assert(NextNref >= 10060).
+	?assert(NextNref >= 10068).
 
 %%-----------------------------------------------------------------------------
 %% Verify load/0 is idempotent: calling it again does not duplicate data.

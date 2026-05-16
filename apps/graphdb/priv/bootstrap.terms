@@ -8,7 +8,7 @@
 %% nodes table is empty.  After a successful load, nref_server:set_floor/1 is
 %% called and the file is never consulted again.
 %%
-%% Pre-assigned nrefs: 1-31 (nodes).
+%% Pre-assigned nrefs: 1-35 (nodes).
 %% Relationship record IDs are allocated by nref_server:get_nref/0, which
 %% starts at nref_start (10000) because {nref_start,...} is processed first.
 %%
@@ -64,6 +64,14 @@
 {node,  3, category,  {17, "Classes"},    []}.
 {node,  4, category,  {17, "Languages"},  []}.
 {node,  5, category,  {17, "Projects"},   []}.
+
+%% -------------------------------------------------------------------------
+%% Level 2 -- Languages' children (category)
+%% -------------------------------------------------------------------------
+{node, 32, category, {17, "Human Languages"},  []}.
+{node, 33, category, {17, "Formal Languages"},  []}.
+{node, 34, category, {17, "Diagram Languages"}, []}.
+{node, 35, category, {17, "Renderers"},         []}.
 
 %% -------------------------------------------------------------------------
 %% Level 2 -- Attributes' children (attribute)
@@ -125,6 +133,12 @@
 {relationship,  1, 22, [], 21,  3, [], composition}.  %% Root -> Classes
 {relationship,  1, 22, [], 21,  4, [], composition}.  %% Root -> Languages
 {relationship,  1, 22, [], 21,  5, [], composition}.  %% Root -> Projects
+
+%% Languages -> category children  (ChildArc=22, ParentArc=21, Kind=composition)
+{relationship,  4, 22, [], 21, 32, [], composition}.  %% Languages -> Human Languages
+{relationship,  4, 22, [], 21, 33, [], composition}.  %% Languages -> Formal Languages
+{relationship,  4, 22, [], 21, 34, [], composition}.  %% Languages -> Diagram Languages
+{relationship,  4, 22, [], 21, 35, [], composition}.  %% Languages -> Renderers
 
 %% Attributes -> attribute children  (ChildArc=24, ParentArc=23, Kind=taxonomy)
 {relationship,  2, 24, [], 23,  6, [], taxonomy}.  %% Attributes -> Names
