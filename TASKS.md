@@ -75,7 +75,13 @@ Quick-Reference table and cerebrum.md before writing any code.
 
 ---
 
-## F2. M6 — Multilingual Layer
+## F2. M6 — Multilingual Layer — RESOLVED
+
+**Status:** Complete. `graphdb_language` is a fully implemented gen_server.
+24/24 CT tests pass (`graphdb_language_SUITE`). 192/192 CT total, 99 EUnit,
+zero warnings. M6-I (write-path integration) is explicitly deferred — it
+depends on L4 (wire `graphdb_mgr` write-side). All Architecture Review issues
+R1–R10 are resolved or closed. See Decision Log below.
 
 **Depends on F1.**
 
@@ -109,9 +115,10 @@ project node record, authored in an implementer-chosen language. That
 language is specified as an AVP on the project root node, referencing a
 language concept node in the environment.
 
-**Current state:** `graphdb_language.erl` is a gen_server stub.
-`bootstrap.terms` carries English strings as node AVPs — these are the
-English default and require no migration.
+**Completed state:** `graphdb_language.erl` is a full gen_server
+implementation covering M6-A through M6-H and M6-J. `bootstrap.terms`
+carries English strings as node AVPs — these are the English default and
+require no migration. M6-I is deferred to L4.
 
 ---
 
@@ -349,9 +356,10 @@ Callers do not construct Mnesia table names directly.
 > **R2: RESOLVED** — pseudocode verified against all four examples.
 > See Decision Log.
 
-**M6-I: Write-path integration**
+**M6-I: Write-path integration** *(DEFERRED to L4)*
 
-When the NYI write operations (`create_attribute`, `create_class`,
+Depends on L4 (wire `graphdb_mgr` write-side operations). When the
+NYI write operations (`create_attribute`, `create_class`,
 `create_instance`) are implemented, each must:
 
   1. Create the environment node atomically in one Mnesia transaction.
@@ -430,26 +438,10 @@ relevant sub-task. Notes are informational and do not block.
 
 #### Blockers
 
-**R1. Project-side overlay story is unspecified — and nref collision
-risk.** *(M6-C, M6-G, M6-I)*
-
-`resolve_label/3` text says "caller passes project `nodes` table name
-as explicit terminal parameter" but the 3-argument signature has no
-such parameter. More critically: project nrefs start at 1 — the same
-keyspace as environment nrefs. A project nref=5 and environment nref=5
-are different nodes; a single `language_*` table keyed by nref alone
-cannot distinguish them. Resolution options:
-
-  - Extend to `resolve_label/4` with an explicit terminal-table atom;
-    keep `language_*` tables environment-only; project overlays use
-    separate per-project `<project_id>_language_*` tables.
-  - Or: key overlay records by `{Scope, Nref}` (one table, two-part
-    key) rather than nref alone.
-
-Decision must also answer: do project instances get their own overlay
-tables, or does label localisation for project nodes live elsewhere?
-M6-I (write-path integration) cannot be specified until this is
-resolved.
+**R1. RESOLVED** — `resolve_label/4` with `Scope :: environment | {project, AnchorNref}`.
+Environment tables: `language_<code>`. Project tables: `language_<code>_<anchor_nref>`.
+`overlay_table_name/2` encodes both forms. M6-I (write-path integration) depends on
+L4 (wire graphdb_mgr write-side) and is explicitly deferred. See Decision Log.
 
 **R2. RESOLVED** — Pseudocode verified in M6-H. The check is
 `Base not in (Output ++ Remaining)` (full chain view). See Decision
@@ -464,53 +456,41 @@ Decision Log.
 
 #### Should Fix
 
-**R5. §15 departure is undocumented.** *(Design)*
+**R5. RESOLVED** — Environment stores English strings directly on
+`#node{}` records (name AVPs on environment nodes). Documented
+departure from the strict reading of §15. Rationale: English is the
+environment's base language; reading it directly from the node record is
+zero-overhead and the en sentinel in `do_resolve_chain/4` makes this
+explicit by design, not accident. See Decision Log.
 
-§15 says "concepts are stored language-neutrally." The design stores
-English directly on environment nodes. This is a defensible choice, but
-it is a departure from the strict reading of §15. Add a Decision Log
-entry documenting the departure and its rationale before closing M6.
+**R6. RESOLVED** — `mnesia:create_table/2` called synchronously from
+`ensure_overlay_table/1` during `register_language/2` and
+`register_dialect/3`. The gen_server serialises all callers; no
+concurrent registration races within a single node. Default Mnesia
+timeout applies. Multi-node schema propagation is a known future
+concern (R12 tracks table-count ceiling); acceptable for the
+current single-node deployment model. See Decision Log.
 
-**R6. Runtime Mnesia table creation needs operational specification.**
-*(M6-A, M6-D)*
+**R7. RESOLVED** — Hooks spawned via `proc_lib:spawn/1`; never inline.
+Each hook body wrapped in try/catch; errors logged and discarded;
+never propagated to the caller. `unregister_translation_hook/1`
+added for test cleanup. See Decision Log.
 
-`mnesia:create_table/2` called from a running gen_server holds a schema
-write-lock and can block under load or fail under partition. Specify:
-synchronous call during `register_language/2`? Timeout?
-Concurrent-registration safety across nodes? What happens if the peer
-hasn't seen the schema change?
-
-**R7. Translation hook execution model is unsafe as written.** *(M6-F)*
-
-Inline hook invocation from a gen_server blocks all other callers for
-the hook's duration and crashes the worker if a hook raises. Required
-changes:
-
-  - Invoke each hook in a spawned process (`proc_lib:spawn/1`), never
-    inline.
-  - Catch all errors; log and discard — never propagate to the caller.
-  - Forbid synchronous re-entry into `graphdb_language` from a hook
-    (deadlock).
-  - Add `unregister_translation_hook(Fun) -> ok` — tests must be able
-    to clean up between cases.
-
-**R8. Environment language declaration mechanism is unspecified.**
-*(M6-C)*
-
-M6-C says "`en` by default, readable from `seeded_nrefs/0`" but
-`seeded_nrefs/0` returns nrefs, not language codes. Where is the
-environment's declared language code stored? Hard-coded atom? Config
-parameter? AVP on the Languages category node (nref 4)? Specify
-storage and retrieval before coding M6-C.
+**R8. RESOLVED** — Environment language code stored as compile-time
+macro `?ENV_LANGUAGE_CODE = en` in `graphdb_language.erl`. Exposed
+via `seeded_nrefs/0` as `env_language_code => en` so callers and
+tests can read it without a magic atom. See Decision Log.
 
 #### Notes
 
 **R9. Test coverage gaps resolved in M6-J above.** The cases missing
 from the original spec have been folded into the M6-J test list.
 
-**R10. Locale code format is undocumented.** `en_gb` (underscore,
-lowercase atom) departs from IETF BCP 47 (`en-GB`). Fine for atom
-convenience but should be a documented choice in the Decision Log.
+**R10. RESOLVED** — `en_gb` (underscore-separated lowercase atom)
+chosen over IETF BCP 47 `en-GB`. Rationale: Erlang atoms cannot
+contain unquoted hyphens; requiring quoted atoms (`'en-GB'`) would
+make API usage awkward. Underscore-lowercase is idiomatic in Erlang.
+The convention is documented; not a format bug. See Decision Log.
 
 **R11. No batch resolver API.** `resolve_label/3` is per-AVP. A
 future `resolve_labels(Nref, [AttrNref], Chain) -> #{AttrNref => Value}`
@@ -542,6 +522,69 @@ The signature `Fun :: fun((Nref, DefaultAVPs) -> ok)` implies the
 return is always `ok`, but this is not enforced. Document explicitly
 that the return value is discarded, or change the contract to
 `-> ok | {error, Reason}` and specify what happens on error.
+
+#### Decision Log
+
+**R1 — Scope type: `environment | {project, AnchorNref}`** (2026-05-18)
+
+`resolve_label/4` takes a `Scope` argument distinguishing environment
+reads (table `language_<code>`) from project reads (table
+`language_<code>_<anchor_nref>`). M6-I (project write-path) deferred
+to L4; the scope type is already in the public API so the boundary is
+clean when L4 lands.
+
+**R2 — Dialect auto-insertion uses full chain view** (2026-05-18)
+
+`do_make_chain/3` checks `Base not in (Output ++ Remaining)` —
+the full chain view, not just the output so far. This ensures a base
+already scheduled to appear later in the chain is not inserted early
+and duplicated. Verified by hand-tracing `[en_gb, en_us]` with
+`en_gb=>en, en_us=>en`.
+
+**R5 — English on env node records, not overlay table** (2026-05-18)
+
+English strings live on `#node{}` `attribute_value_pairs` fields, not
+in a `language_en` Mnesia table. The `en` sentinel in
+`do_resolve_chain/4` bypasses the overlay lookup and reads the node
+directly. Rationale: zero-overhead for the most common case; avoids
+duplicating every English label into a separate table at bootstrap.
+This is a deliberate departure from the strict reading of §15
+("language-neutral storage") — English is the structural language of
+the environment and is treated specially by design.
+
+**R6 — Synchronous overlay table creation, single-node only** (2026-05-18)
+
+`mnesia:create_table/2` is called synchronously inside the gen_server
+handler for `register_language/2`. The gen_server serialises all
+callers so there is no concurrent-registration race within a node.
+Multi-node schema distribution is a known future concern deferred to
+whenever multi-node support is added; for now the single-node model
+is the only deployment target.
+
+**R7 — Hooks spawned, crash-safe, unregister for tests** (2026-05-18)
+
+Translation hooks are invoked via `proc_lib:spawn/1` so a slow or
+crashing hook cannot block or kill the gen_server. Each hook body is
+wrapped in try/catch; errors are logged and discarded. The return
+value is always discarded. `unregister_translation_hook/1` exists
+specifically so CT cases can clean up their hooks between test cases.
+
+**R8 — Environment language code as compile-time macro** (2026-05-18)
+
+`?ENV_LANGUAGE_CODE = en` is a module-level macro. Exposed through
+`seeded_nrefs/0` as `env_language_code => en` so callers can read it
+without an atom literal. Chosen over a config parameter because the
+environment language is a structural invariant, not a deployment
+setting — changing it would require re-bootstrapping the entire
+environment.
+
+**R10 — Underscore-lowercase atom convention for locale codes** (2026-05-18)
+
+`en_gb` rather than `'en-GB'`. Erlang atoms containing hyphens must
+be quoted; unquoted `en_gb` is idiomatic and avoids the quoting
+requirement. All locale codes in the API follow this convention.
+Applications bridging to BCP 47 external systems must translate at
+the boundary.
 
 ---
 
