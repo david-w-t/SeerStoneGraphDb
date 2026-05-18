@@ -150,10 +150,13 @@ table exists to make `en` a well-formed chain entry.
 
 `graphdb_language:init/1` seeds a language concept node for English
 under Human Languages (nref 32) using the standard
-ensure-seed-by-name pattern. Node kind is determined during
-implementation (candidate: `class`, as languages are ontology-level
-definitional concepts rather than project instances). The English nref
-is cached in gen_server state and exposed via
+ensure-seed-by-name pattern. **Node kind: `instance`.** English is
+already bootstrapped as `kind=instance` at nref 10000 (F2); all
+language nodes (base languages, dialects) follow the same kind.
+`kind=instance` eliminates the dual-mechanism risk: instances do not
+participate in taxonomic IS-A arcs, so `base_language` AVP is the
+sole authority for base/dialect relationships. The English nref is
+cached in gen_server state and exposed via
 `graphdb_language:seeded_nrefs/0`.
 
 Base languages and dialects are both language concept nodes, but
@@ -170,10 +173,8 @@ Base language nodes carry no such AVP. This makes the base/dialect
 relationship explicit, queryable, and independent of the atom naming
 convention.
 
-> **R3 (blocker):** Decide language concept node `kind` before
-> implementing — `class` requires explicitly forbidding taxonomic arcs
-> as a second base/dialect mechanism. Record decision before coding.
-> See Architecture Review.
+> **R3: RESOLVED** — `kind=instance` for all language nodes.
+> See Decision Log.
 >
 > **R4 (should fix):** Move `project_language` seeding from
 > `graphdb_attr:init/1` to `graphdb_language:init/1` — owning worker
@@ -304,27 +305,49 @@ graphdb_language:make_chain(Codes :: [atom()]) -> [atom()]
 ```
 
 Validates each code against registered languages; drops unknown codes
-with a log warning. Applies the dialect auto-insertion rule: for each
-dialect code, look up the `base_language` AVP on its concept node to
-find the base language code authoritatively (not by atom parsing). If
-the base code does not appear anywhere in the chain as built so far,
-insert it immediately after the dialect. Deduplication: when multiple
-dialects of the same base appear, one insertion suffices.
+with a log warning. Applies the dialect auto-insertion rule using the
+following verified pseudocode:
 
-Examples (derive each mechanically from pseudocode before coding):
+```
+make_chain(InputCodes):
+  ValidCodes = [C || C <- InputCodes, is_registered(C)]
+  Output    = []
+  Remaining = ValidCodes
+  while Remaining != []:
+    Code      = head(Remaining)
+    Remaining = tail(Remaining)
+    Output    = Output ++ [Code]          % always emit
+    if is_dialect(Code):                  % concept node has base_language AVP
+      Base      = base_language_of(Code)  % AVP nref → concept node → lang_code atom
+      FullChain = Output ++ Remaining     % current output (incl. Code) + remaining input
+      if Base not in FullChain:
+        Output = Output ++ [Base]         % insert base immediately after dialect
+  return Output
+```
 
-  - `[de, en_gb, fr]`    → `[de, en_gb, en, fr]`
-  - `[en_gb, en_us]`     → `[en_gb, en, en_us]`
-  - `[en_gb, en, fr]`    → `[en_gb, en, fr]`   (base already in chain)
-  - `[pt_br, de]`        → `[pt_br, pt, de]`
+The check is `Base not in (Output ++ Remaining)` — the full current
+chain view, not just the output built so far. A base that still
+appears later in the remaining input is not re-inserted.
+
+Verified derivations:
+
+  - `[de, en_gb, fr]`  → `[de, en_gb, en, fr]`    (en∉[de,en_gb,fr] → insert)
+  - `[en_gb, en_us]`   → `[en_gb, en, en_us]`      (en∉[en_gb,en_us] → insert after en_gb;
+                                                      en∈[en_gb,en,en_us] → skip after en_us)
+  - `[en_gb, en, fr]`  → `[en_gb, en, fr]`          (en∈[en_gb,en,fr] → skip)
+  - `[pt_br, de]`      → `[pt_br, pt, de]`          (pt∉[pt_br,de] → insert)
+
+Implementation notes:
+- `base_language_of/1` does two Mnesia reads: concept-node-by-code →
+  `base_language` AVP nref → concept-node-by-nref → `lang_code` atom.
+  Cache results within a single `make_chain/1` call.
+- `is_dialect/1` is a check for the presence of `base_language` AVP
+  on the concept node — no separate flag needed.
 
 Callers do not construct Mnesia table names directly.
 
-> **R2 (blocker):** Write operational pseudocode for the algorithm
-> above and verify each example derives from it mechanically before
-> coding. The original prose rule ("not after the dialect") was wrong
-> — see Architecture Review. The corrected rule is stated here; the
-> pseudocode is the required pre-coding artifact.
+> **R2: RESOLVED** — pseudocode verified against all four examples.
+> See Decision Log.
 
 **M6-I: Write-path integration**
 
@@ -428,44 +451,16 @@ tables, or does label localisation for project nodes live elsewhere?
 M6-I (write-path integration) cannot be specified until this is
 resolved.
 
-**R2. Dialect auto-insertion algorithm requires pseudocode.**
-*(M6-H)*
+**R2. RESOLVED** — Pseudocode verified in M6-H. The check is
+`Base not in (Output ++ Remaining)` (full chain view). See Decision
+Log.
 
-The original prose rule ("if the base code does not appear anywhere
-*after* the dialect in the remaining list") produces wrong results for
-`[en_gb, en_us]` — it inserts `en` twice. The corrected rule is
-stated in M6-H: insert base if it does not appear anywhere in the
-chain as built so far. Write operational pseudocode and derive every
-example in M6-H from it mechanically before coding or writing EUnit
-cases.
+**R3. RESOLVED** — `kind=instance` for all language nodes. See
+Decision Log.
 
-**R3. Language concept node `kind` must be decided before
-implementation.** *(M6-B)*
-
-Leaving `kind` as "candidate: `class`" creates a risk: if `class` is
-chosen, the taxonomic IS-A arc system provides a *second* mechanism for
-expressing base/dialect beside the `base_language` AVP. Two mechanisms
-for the same fact will diverge. Decision required:
-
-  - Choose `class`: explicitly forbid using class taxonomy for the
-    base/dialect relationship; `base_language` AVP is the sole
-    authority.
-  - Or: introduce `kind = language` (updates `kind_order/1`,
-    validators, and bootstrap across the board).
-
-`class` is simpler. Record the decision and the constraint.
-
-**R4. Seeded literal attribute ownership is inconsistent.** *(M6-B,
-M6-G)*
-
-`base_language` is seeded by `graphdb_language:init/1`;
-`project_language` is seeded by `graphdb_attr:init/1`. Both are
-AVP-marker literals with the same structural role. The established
-pattern (`qualifying_characteristic` seeded by `graphdb_class`,
-`target_kind` by `graphdb_instance`) is: the *owning worker* seeds
-its own attributes. `project_language` belongs to the language layer,
-not the attribute library. Move its seeding to
-`graphdb_language:init/1`.
+**R4. RESOLVED** — `project_language` seeded by
+`graphdb_language:init/1`. Owning-worker pattern confirmed. See
+Decision Log.
 
 #### Should Fix
 
