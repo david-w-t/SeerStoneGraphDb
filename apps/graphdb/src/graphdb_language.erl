@@ -321,6 +321,18 @@ handle_call({set_labels, Nref, Code, NewAVPs}, _From, State) ->
 handle_call({resolve_label, Nref, AttrNref, Chain, Scope}, _From, State) ->
     Reply = do_resolve_label(Nref, AttrNref, Chain, Scope),
     {reply, Reply, State};
+handle_call({make_chain, Codes}, _From,
+        #state{lang_code_map = CM, dialect_map = DM} = State) ->
+    ValidCodes = [C || C <- Codes, maps:is_key(C, CM)],
+    Dropped = length(Codes) - length(ValidCodes),
+    case Dropped > 0 of
+        true  -> logger:warning(
+                     "graphdb_language:make_chain dropped ~p unknown codes",
+                     [Dropped]);
+        false -> ok
+    end,
+    Chain = do_make_chain(ValidCodes, [], DM),
+    {reply, Chain, State};
 handle_call(Request, From, State) ->
     ?UEM(handle_call, {Request, From, State}),
     {noreply, State}.

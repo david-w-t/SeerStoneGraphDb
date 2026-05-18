@@ -394,11 +394,23 @@ resolve_label_not_found(_Config) ->
 
 
 %%=====================================================================
-%% make_chain Tests (stubs — implemented in Task 7)
+%% make_chain Integration Tests
 %%=====================================================================
 
-make_chain_drops_unknown_codes(_Config) -> {skip, not_yet_implemented}.
-make_chain_dialect_insertion(_Config)   -> {skip, not_yet_implemented}.
+make_chain_drops_unknown_codes(_Config) ->
+    {ok, _} = graphdb_language:start_link(),
+    {ok, _} = graphdb_language:register_language(de, "German"),
+    %% xx is not registered — dropped silently
+    [de] = graphdb_language:make_chain([de, xx]).
+
+make_chain_dialect_insertion(_Config) ->
+    {ok, _} = graphdb_language:start_link(),
+    {ok, _} = graphdb_language:register_language(fr, "French"),
+    {ok, _} = graphdb_language:register_dialect(en_gb, "British English", en),
+    %% en_gb is registered; its base en is already in lang_code_map (bootstrap)
+    %% de is not registered → dropped
+    %% en_gb is a dialect of en; en absent from [en_gb, fr] → inserted
+    [en_gb, en, fr] = graphdb_language:make_chain([de, en_gb, fr]).
 
 
 %%=====================================================================
