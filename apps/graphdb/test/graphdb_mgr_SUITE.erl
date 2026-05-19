@@ -80,6 +80,7 @@
 	create_literal_attribute_delegates/1,
 	create_relationship_attribute_delegates/1,
 	create_relationship_type_delegates/1,
+	create_relationship_attribute_missing_avps/1,
 	create_attribute_unknown_parent/1,
 	create_class_delegates/1,
 	create_instance_delegates/1,
@@ -132,6 +133,7 @@ groups() ->
 			create_literal_attribute_delegates,
 			create_relationship_attribute_delegates,
 			create_relationship_type_delegates,
+			create_relationship_attribute_missing_avps,
 			create_attribute_unknown_parent,
 			create_class_delegates,
 			create_instance_delegates,
@@ -189,6 +191,7 @@ init_per_testcase(TC, Config) when
 		TC =:= create_literal_attribute_delegates;
 		TC =:= create_relationship_attribute_delegates;
 		TC =:= create_relationship_type_delegates;
+		TC =:= create_relationship_attribute_missing_avps;
 		TC =:= create_attribute_unknown_parent;
 		TC =:= create_class_delegates;
 		TC =:= create_instance_delegates;
@@ -505,6 +508,15 @@ create_relationship_type_delegates(_Config) ->
 	?assert(is_integer(Nref)),
 	{ok, Node} = graphdb_mgr:get_node(Nref),
 	?assertEqual(attribute, Node#node.kind).
+
+%%-----------------------------------------------------------------------------
+%% create_attribute returns an error when exactly one of reciprocal_name /
+%% target_kind is present (partial AVPs).  Both-or-neither is required for
+%% the Relationships subtree; one-of-two is the missing_avps error path.
+%%-----------------------------------------------------------------------------
+create_relationship_attribute_missing_avps(_Config) ->
+	?assertMatch({error, _},
+		graphdb_mgr:create_attribute("Has", 8, #{reciprocal_name => "BelongsTo"})).
 
 %%-----------------------------------------------------------------------------
 %% create_attribute returns {error, {unknown_attribute_parent, _}} for a
