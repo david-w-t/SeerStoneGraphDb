@@ -520,7 +520,7 @@ term_to_node({node, Nref, Kind, {NameAttrNref, NameValue}, ExtraAVPs}) ->
 %%
 %% Expands each relationship term into two directed rows and writes
 %% both atomically in a single Mnesia transaction.  Each row gets a
-%% unique ID from nref_server:get_nref/0 (allocated outside the
+%% unique ID from rel_id_server:get_id/0 (allocated outside the
 %% transaction to avoid side-effects on retry).
 %%-----------------------------------------------------------------------------
 write_relationships(Rels) ->
@@ -545,8 +545,7 @@ write_relationships(Rels) ->
 %%   Row 2: source=N2, characterization=R2, target=N1, reciprocal=R1, kind=Kind
 %%-----------------------------------------------------------------------------
 expand_relationship({relationship, N1, R1, AVPs1, R2, N2, AVPs2, Kind}) ->
-	Id1 = nref_server:get_nref(),
-	Id2 = nref_server:get_nref(),
+	{Id1, Id2} = rel_id_server:get_id_pair(),
 	Row1 = #relationship{
 		id = Id1,
 		kind = Kind,
