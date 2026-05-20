@@ -425,8 +425,8 @@ ensure_literal_seed(Name) ->
 				parents = [?PARENT_LITERALS],
 				attribute_value_pairs = [NameAVP]
 			},
-			Id1 = nref_server:get_nref(),
-			Id2 = nref_server:get_nref(),
+			Id1 = rel_id_server:get_id(),
+			Id2 = rel_id_server:get_id(),
 			P2C = #relationship{
 				id             = Id1,
 				kind           = taxonomy,
@@ -599,8 +599,8 @@ do_register_language(Code, Name, State) ->
 	#state{lang_code_nref  = LCAttr,
 	       lang_human_nref = LHNref} = State,
 	Nref   = nref_server:get_nref(),
-	ArcId1 = nref_server:get_nref(),
-	ArcId2 = nref_server:get_nref(),
+	ArcId1 = rel_id_server:get_id(),
+	ArcId2 = rel_id_server:get_id(),
 	NameAVP = #{attribute => ?NAME_ATTR_FOR_INSTANCE, value => Name},
 	CodeAVP = #{attribute => LCAttr,                 value => Code},
 	Node = #node{
@@ -662,8 +662,8 @@ do_register_dialect(Code, Name, BaseCode, State) ->
 			#state{lang_code_nref  = LCAttr,
 			       lang_human_nref = LHNref} = State,
 			Nref   = nref_server:get_nref(),
-			ArcId1 = nref_server:get_nref(),
-			ArcId2 = nref_server:get_nref(),
+			ArcId1 = rel_id_server:get_id(),
+			ArcId2 = rel_id_server:get_id(),
 			NameAVP = #{attribute => ?NAME_ATTR_FOR_INSTANCE, value => Name},
 			CodeAVP = #{attribute => LCAttr,  value => Code},
 			BaseAVP = #{attribute => BLAttr,  value => BaseNref},
