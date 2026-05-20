@@ -48,6 +48,7 @@
 %%---------------------------------------------------------------------
 %% Include files
 %%---------------------------------------------------------------------
+-include_lib("graphdb/include/graphdb_nrefs.hrl").
 
 %%---------------------------------------------------------------------
 %% Macro Functions
@@ -482,8 +483,7 @@ check_category_guard(Nref) ->
 %% Instance-to-class membership (instantiation):
 %%   29 -- instance -> class
 %%-----------------------------------------------------------------------------
--define(PARENT_ARCS, [21, 23, 25, 27]).
--define(CLASS_MEMBERSHIP_ARC, 29).
+-define(PARENT_ARCS, [?ARC_CAT_PARENT, ?ARC_ATTR_PARENT, ?ARC_CLS_PARENT, ?ARC_INST_PARENT]).
 
 %%-----------------------------------------------------------------------------
 %% expected_parents(Nref) -> [integer()]
@@ -515,7 +515,7 @@ expected_classes(Nref) ->
 		#relationship.source_nref),
 	[A#relationship.target_nref || A <- Arcs,
 		A#relationship.kind =:= instantiation,
-		A#relationship.characterization =:= ?CLASS_MEMBERSHIP_ARC].
+		A#relationship.characterization =:= ?ARC_INST_TO_CLASS].
 
 
 %%-----------------------------------------------------------------------------
