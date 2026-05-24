@@ -11,9 +11,10 @@
 %%
 %%              F3 sequencing: session API (new_session/0, refresh/1)
 %%              is real. Q1 (#q_get_node{}), Q1b (#q_get_arcs{}), Q2
-%%              (#q_describe{} for kind=attribute), and Q3
-%%              (#q_describe{} for kind=class) are implemented; Q4-Q6
-%%              return {error, not_implemented} until Tasks 7-9.
+%%              (#q_describe{} for kind=attribute), Q3 (#q_describe{}
+%%              for kind=class), and Q4 (#q_describe{} for
+%%              kind=instance) are implemented; Q5-Q6 return
+%%              {error, not_implemented} until Tasks 8-9.
 %%
 %% Design source: f3-graphdb-query-design.md at project root.
 %%---------------------------------------------------------------------
@@ -29,6 +30,8 @@
 %% Q2 (#q_describe{} for kind=attribute) implemented (F3 Task 5).
 %% Rev A.4 Date: May 2026 Author: David W. Thomas
 %% Q3 (#q_describe{} for kind=class) implemented (F3 Task 6).
+%% Rev A.5 Date: May 2026 Author: David W. Thomas
+%% Q4 (#q_describe{} for kind=instance) implemented (F3 Task 7).
 %%---------------------------------------------------------------------
 -module(graphdb_query).
 -behaviour(gen_server).
@@ -209,6 +212,8 @@ dispatch(#q_describe{nref = N, labels = Lang}, Session) ->
             describe_attribute(Node, Lang, Session1);
         {#node{kind = class} = Node, Session1} ->
             describe_class(Node, Lang, Session1);
+        {#node{kind = instance} = Node, Session1} ->
+            describe_instance(Node, Lang, Session1);
         {#node{kind = Kind}, Session1} ->
             {{error, {unsupported_kind, Kind}}, Session1}
     end;
@@ -364,6 +369,97 @@ describe_class(#node{nref = N, parents = Parents,
                avps                       => AVPs,
                labels                     => Labels},
     {{ok, Result}, Session1}.
+
+%%---------------------------------------------------------------------
+%% describe_instance(Node, LangSpec, Session)
+%%     -> {{ok, ResultMap}, Session1}
+%%
+%% Q4: surfaces compositional + class structure, resolved attributes
+%% via 4-priority inheritance (Task 0's resolve_value/2 returns
+%% {ok, Value, Source}), and BOTH outgoing and incoming connection
+%% arcs (per-direction characterization and AVPs differ).
+%%---------------------------------------------------------------------
+describe_instance(#node{nref = N, parents = Parents, classes = Classes,
+                        attribute_value_pairs = AVPs} = Node, LangSpec,
+                  Session) ->
+    CompositionalParent = case Parents of
+        [P | _] -> P;
+        []      -> undefined
+    end,
+    {ok, CompAncestorNodes} = graphdb_instance:compositional_ancestors(N),
+    CompAncestors = [Nd#node.nref || Nd <- CompAncestorNodes],
+    %% class_ancestors is the transitive closure of "is-a" from the
+    %% instance's classes, INCLUDING the direct classes themselves so
+    %% callers can ask one list "what is this instance" without having
+    %% to merge `classes` and the strictly-ancestral set.
+    ClassAncestors = lists:usort(Classes ++ lists:flatmap(
+        fun(C) ->
+            {ok, AncNodes} = graphdb_class:ancestors(C),
+            [Nd#node.nref || Nd <- AncNodes]
+        end, Classes)),
+    Resolved = resolved_attributes(Node),
+    {OutArcs, Session1} = session_read_arcs(Session, N, outgoing,
+                                            [connection]),
+    {InArcs,  Session2} = session_read_arcs(Session1, N, incoming,
+                                            [connection]),
+    Outgoing = [#{characterization => A#relationship.characterization,
+                  target           => A#relationship.target_nref,
+                  template         => template_avp(A#relationship.avps)}
+                || A <- OutArcs],
+    Incoming = [#{characterization => A#relationship.characterization,
+                  source           => A#relationship.source_nref,
+                  template         => template_avp(A#relationship.avps)}
+                || A <- InArcs],
+    AllNrefs = lists:usort(
+        [N] ++ Classes ++ ClassAncestors
+        ++ case CompositionalParent of undefined -> []; X -> [X] end
+        ++ CompAncestors
+        ++ [maps:get(characterization, M) || M <- Outgoing]
+        ++ [maps:get(target,           M) || M <- Outgoing]
+        ++ [maps:get(characterization, M) || M <- Incoming]
+        ++ [maps:get(source,           M) || M <- Incoming]),
+    {Labels, Session3} = resolve_labels(AllNrefs, LangSpec, Session2),
+    Result = #{nref                    => N,
+               kind                    => instance,
+               classes                 => Classes,
+               class_ancestors         => ClassAncestors,
+               compositional_parent    => CompositionalParent,
+               compositional_ancestors => CompAncestors,
+               resolved_attributes     => Resolved,
+               outgoing_connections    => Outgoing,
+               incoming_connections    => Incoming,
+               avps                    => AVPs,
+               labels                  => Labels},
+    {{ok, Result}, Session3}.
+
+%%---------------------------------------------------------------------
+%% resolved_attributes(Node) -> #{AttrNref => #{value, source}}
+%%
+%% Walks every class's full QC list and resolves each via
+%% graphdb_instance:resolve_value/2, which returns
+%% {ok, Value, Source} (Task 0).
+%%---------------------------------------------------------------------
+resolved_attributes(#node{nref = N, classes = Classes}) ->
+    QCAttrs = lists:usort(lists:flatmap(
+        fun(C) ->
+            {ok, QCs} = graphdb_class:inherited_qcs(C),
+            [A || {A, _Value} <- QCs]
+        end, Classes)),
+    lists:foldl(fun(Q, Acc) ->
+        case graphdb_instance:resolve_value(N, Q) of
+            {ok, Value, Source} -> Acc#{Q => #{value  => Value,
+                                               source => Source}};
+            not_found            -> Acc
+        end
+    end, #{}, QCAttrs).
+
+template_avp(AVPs) ->
+    case lists:search(
+            fun(#{attribute := A}) -> A =:= ?ARC_TEMPLATE end,
+            AVPs) of
+        {value, #{value := V}} -> V;
+        false                  -> undefined
+    end.
 
 %%---------------------------------------------------------------------
 %% attribute_type_marker(Session) -> integer() | undefined

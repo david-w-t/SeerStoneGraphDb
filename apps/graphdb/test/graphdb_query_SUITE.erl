@@ -70,7 +70,13 @@
     q3_describes_class_with_superclasses/1,
     q3_lists_subclasses/1,
     q3_includes_qcs_flat_list/1,
-    q3_class_not_found/1
+    q3_class_not_found/1,
+    %% Q4 — describe_instance
+    q4_describes_instance_with_class/1,
+    q4_resolves_inherited_attributes/1,
+    q4_outgoing_and_incoming_connections/1,
+    q4_compositional_ancestors/1,
+    q4_instance_not_found/1
 ]).
 
 suite() ->
@@ -78,7 +84,8 @@ suite() ->
 
 all() ->
     [{group, skeleton}, {group, q1_get_node}, {group, q1b_get_arcs},
-     {group, q2_describe_attribute}, {group, q3_describe_class}].
+     {group, q2_describe_attribute}, {group, q3_describe_class},
+     {group, q4_describe_instance}].
 
 groups() ->
     [{skeleton, [], [
@@ -117,6 +124,13 @@ groups() ->
         q3_lists_subclasses,
         q3_includes_qcs_flat_list,
         q3_class_not_found
+     ]},
+     {q4_describe_instance, [], [
+        q4_describes_instance_with_class,
+        q4_resolves_inherited_attributes,
+        q4_outgoing_and_incoming_connections,
+        q4_compositional_ancestors,
+        q4_instance_not_found
      ]}].
 
 
@@ -489,6 +503,75 @@ q3_includes_qcs_flat_list(_Config) ->
     ?assert(lists:member({WeightA, undefined}, QCs)).
 
 q3_class_not_found(_Config) ->
+    ?assertMatch({error, {nref_not_found, 9999999}},
+                 graphdb_query:execute_query(
+                     #q_describe{nref = 9999999, labels = default})).
+
+%%---------------------------------------------------------------------
+%% Q4 — describe_instance
+%%---------------------------------------------------------------------
+q4_describes_instance_with_class(_Config) ->
+    {ok, Vehicle} = graphdb_class:create_class("Vehicle", ?NREF_CLASSES),
+    {ok, Taurus}  = graphdb_instance:create_instance(
+                       "Taurus", Vehicle, ?NREF_PROJECTS),
+    {ok, R} = graphdb_query:execute_query(
+        #q_describe{nref = Taurus, labels = default}),
+    ?assertEqual(instance,  maps:get(kind, R)),
+    ?assertEqual([Vehicle], maps:get(classes, R)),
+    ?assert(lists:member(Vehicle, maps:get(class_ancestors, R))).
+
+q4_resolves_inherited_attributes(_Config) ->
+    {ok, Vehicle} = graphdb_class:create_class("Vehicle", ?NREF_CLASSES),
+    {ok, WeightA} = graphdb_attr:create_literal_attribute("weight", number),
+    ok = graphdb_class:add_qualifying_characteristic(Vehicle, WeightA),
+    %% Bind a class-level value (Task 0 adds bind_qc_value/3)
+    ok = graphdb_class:bind_qc_value(Vehicle, WeightA, 3500),
+    {ok, Taurus} = graphdb_instance:create_instance(
+                      "Taurus", Vehicle, ?NREF_PROJECTS),
+    {ok, R} = graphdb_query:execute_query(
+        #q_describe{nref = Taurus, labels = default}),
+    Resolved = maps:get(resolved_attributes, R),
+    Weight = maps:get(WeightA, Resolved),
+    ?assertEqual(3500,             maps:get(value,  Weight)),
+    ?assertEqual({class, Vehicle}, maps:get(source, Weight)).
+
+q4_outgoing_and_incoming_connections(_Config) ->
+    {ok, Mfr}    = graphdb_class:create_class("Manufacturer", ?NREF_CLASSES),
+    {ok, Veh}    = graphdb_class:create_class("Vehicle",      ?NREF_CLASSES),
+    {ok, Ford}   = graphdb_instance:create_instance(
+                       "Ford",   Mfr, ?NREF_PROJECTS),
+    {ok, Tau}    = graphdb_instance:create_instance(
+                       "Taurus", Veh, ?NREF_PROJECTS),
+    %% create_relationship_attribute/3 atomically creates BOTH directions
+    %% in one call and returns {ok, {FwdNref, RevNref}}.
+    {ok, {MakesA, MadeByA}} = graphdb_attr:create_relationship_attribute(
+                                  "makes", "made_by", instance),
+    ok = graphdb_instance:add_relationship(Ford, MakesA, Tau, MadeByA),
+    {ok, R} = graphdb_query:execute_query(
+        #q_describe{nref = Tau, labels = default}),
+    Outgoing = maps:get(outgoing_connections, R),
+    Incoming = maps:get(incoming_connections, R),
+    %% Taurus points at Ford via MadeByA (outgoing).
+    %% Ford points at Taurus via MakesA (incoming, from Taurus's pov).
+    ?assert(lists:any(fun(#{characterization := C, target := T}) ->
+                          C =:= MadeByA andalso T =:= Ford
+                      end, Outgoing)),
+    ?assert(lists:any(fun(#{characterization := C, source := S}) ->
+                          C =:= MakesA andalso S =:= Ford
+                      end, Incoming)).
+
+q4_compositional_ancestors(_Config) ->
+    {ok, Veh}    = graphdb_class:create_class("Vehicle", ?NREF_CLASSES),
+    {ok, Car}    = graphdb_instance:create_instance(
+                       "Car",    Veh, ?NREF_PROJECTS),
+    {ok, Engine} = graphdb_instance:create_instance(
+                       "Engine", Veh, Car),
+    {ok, R} = graphdb_query:execute_query(
+        #q_describe{nref = Engine, labels = default}),
+    ?assertEqual(Car, maps:get(compositional_parent, R)),
+    ?assert(lists:member(Car, maps:get(compositional_ancestors, R))).
+
+q4_instance_not_found(_Config) ->
     ?assertMatch({error, {nref_not_found, 9999999}},
                  graphdb_query:execute_query(
                      #q_describe{nref = 9999999, labels = default})).
