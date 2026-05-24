@@ -51,14 +51,21 @@
     q1_not_found_returns_error/1,
     q1_session_form_returns_session/1,
     q1_cache_populates_on_read/1,
-    q1_cache_hit_skips_mnesia/1
+    q1_cache_hit_skips_mnesia/1,
+    %% Q1b — get_arcs
+    q1b_outgoing_all_kinds/1,
+    q1b_incoming_all_kinds/1,
+    q1b_both_directions/1,
+    q1b_kind_filter_taxonomy_only/1,
+    q1b_nref_with_no_arcs/1,
+    q1b_cache_uses_dir_kind_key/1
 ]).
 
 suite() ->
     [{timetrap, {seconds, 30}}].
 
 all() ->
-    [{group, skeleton}, {group, q1_get_node}].
+    [{group, skeleton}, {group, q1_get_node}, {group, q1b_get_arcs}].
 
 groups() ->
     [{skeleton, [], [
@@ -75,6 +82,14 @@ groups() ->
         q1_session_form_returns_session,
         q1_cache_populates_on_read,
         q1_cache_hit_skips_mnesia
+     ]},
+     {q1b_get_arcs, [], [
+        q1b_outgoing_all_kinds,
+        q1b_incoming_all_kinds,
+        q1b_both_directions,
+        q1b_kind_filter_taxonomy_only,
+        q1b_nref_with_no_arcs,
+        q1b_cache_uses_dir_kind_key
      ]}].
 
 
@@ -261,3 +276,91 @@ q1_cache_hit_skips_mnesia(_Config) ->
     {ok, Node2, _S2} = graphdb_query:execute_query(
         #q_get_node{nref = ?NREF_ROOT}, S1),
     ?assertEqual(Node1, Node2).
+
+
+%%=====================================================================
+%% Q1b — get_arcs tests
+%%
+%% NOTE: bootstrap labels the Attributes-subtree child arcs with
+%% ?ARC_ATTR_CHILD (24, kind=taxonomy), NOT ?ARC_CAT_CHILD (22,
+%% kind=composition) — the category-vs-attribute distinction was set by
+%% PR #15. The plan's test comments referenced ?ARC_CAT_CHILD; the real
+%% ground-truth invariant is "child arcs exist with the appropriate
+%% subtree label," so we assert against ?ARC_ATTR_CHILD here.
+%%=====================================================================
+
+q1b_outgoing_all_kinds(_Config) ->
+    %% NREF_ATTRIBUTES (2) is the parent of NREF_NAMES (6), NREF_LITERALS
+    %% (7), NREF_RELATIONSHIPS (8). Outgoing arcs from 2 include three
+    %% ?ARC_ATTR_CHILD arcs (taxonomy, per PR #15).
+    {ok, Arcs} = graphdb_query:execute_query(
+        #q_get_arcs{nref      = ?NREF_ATTRIBUTES,
+                    direction = outgoing,
+                    arc_kinds = all}),
+    ?assert(is_list(Arcs)),
+    ChildArcs = [A || A <- Arcs,
+                      maps:get(characterization, A) =:= ?ARC_ATTR_CHILD],
+    ?assert(length(ChildArcs) >= 3),
+    %% Every arc has the expected projected keys
+    [?assertMatch(#{id := _, kind := _, source_nref := _,
+                    characterization := _, target_nref := _,
+                    reciprocal := _, avps := _}, A) || A <- Arcs].
+
+q1b_incoming_all_kinds(_Config) ->
+    %% NREF_NAMES (6) has one incoming child arc from NREF_ATTRIBUTES (2),
+    %% labelled ?ARC_ATTR_CHILD (kind=taxonomy).
+    {ok, Arcs} = graphdb_query:execute_query(
+        #q_get_arcs{nref      = ?NREF_NAMES,
+                    direction = incoming,
+                    arc_kinds = all}),
+    ParentArcs = [A || A <- Arcs,
+                       maps:get(characterization, A) =:= ?ARC_ATTR_CHILD],
+    ?assertEqual(1, length(ParentArcs)),
+    [#{source_nref := Src}] = ParentArcs,
+    ?assertEqual(?NREF_ATTRIBUTES, Src).
+
+q1b_both_directions(_Config) ->
+    %% NREF_NAMES has incoming arcs (parent + child-side-of-children) and
+    %% outgoing arcs (parent-side-up + children). The two index reads are
+    %% disjoint (each row has exactly one source_nref and one
+    %% target_nref), so Out + In = Both.
+    {ok, ArcsOut} = graphdb_query:execute_query(
+        #q_get_arcs{nref = ?NREF_NAMES, direction = outgoing,
+                    arc_kinds = all}),
+    {ok, ArcsIn}  = graphdb_query:execute_query(
+        #q_get_arcs{nref = ?NREF_NAMES, direction = incoming,
+                    arc_kinds = all}),
+    {ok, ArcsBoth} = graphdb_query:execute_query(
+        #q_get_arcs{nref = ?NREF_NAMES, direction = both,
+                    arc_kinds = all}),
+    ?assertEqual(length(ArcsOut) + length(ArcsIn),
+                 length(ArcsBoth)).
+
+q1b_kind_filter_taxonomy_only(_Config) ->
+    %% NREF_LITERALS (7) — all its outgoing arcs (parent-up + children)
+    %% are kind=taxonomy.
+    {ok, TaxArcs} = graphdb_query:execute_query(
+        #q_get_arcs{nref = ?NREF_LITERALS, direction = outgoing,
+                    arc_kinds = [taxonomy]}),
+    {ok, AllArcs} = graphdb_query:execute_query(
+        #q_get_arcs{nref = ?NREF_LITERALS, direction = outgoing,
+                    arc_kinds = all}),
+    ?assertEqual(length(TaxArcs),
+                 length([A || A <- AllArcs,
+                              maps:get(kind, A) =:= taxonomy])).
+
+q1b_nref_with_no_arcs(_Config) ->
+    %% An unknown nref simply yields an empty list, not an error.
+    {ok, Arcs} = graphdb_query:execute_query(
+        #q_get_arcs{nref = 9999999, direction = outgoing,
+                    arc_kinds = all}),
+    ?assertEqual([], Arcs).
+
+q1b_cache_uses_dir_kind_key(_Config) ->
+    S0 = graphdb_query:new_session(),
+    {ok, _, S1} = graphdb_query:execute_query(
+        #q_get_arcs{nref = ?NREF_ROOT, direction = outgoing,
+                    arc_kinds = all}, S0),
+    Cache = maps:get(cache, S1),
+    Key = {arcs, ?NREF_ROOT, outgoing, all},
+    ?assert(maps:is_key(Key, Cache)).

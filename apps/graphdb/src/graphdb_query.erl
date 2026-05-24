@@ -10,8 +10,9 @@
 %%              read-through cache.
 %%
 %%              F3 sequencing: session API (new_session/0, refresh/1)
-%%              is real. Q1 (#q_get_node{}) is implemented; Q1b/Q2-Q6
-%%              return {error, not_implemented} until Tasks 4-9.
+%%              is real. Q1 (#q_get_node{}) and Q1b (#q_get_arcs{}) are
+%%              implemented; Q2-Q6 return {error, not_implemented} until
+%%              Tasks 5-9.
 %%
 %% Design source: f3-graphdb-query-design.md at project root.
 %%---------------------------------------------------------------------
@@ -21,6 +22,8 @@
 %% Initial skeleton implementation (F3 Task 2).
 %% Rev A.1 Date: May 2026 Author: David W. Thomas
 %% Q1 (#q_get_node{}) implemented (F3 Task 3).
+%% Rev A.2 Date: May 2026 Author: David W. Thomas
+%% Q1b (#q_get_arcs{}) implemented (F3 Task 4).
 %%---------------------------------------------------------------------
 -module(graphdb_query).
 -behaviour(gen_server).
@@ -77,7 +80,6 @@
     avps
 }).
 
--compile({nowarn_unused_record, [relationship]}).
 
 
 %%---------------------------------------------------------------------
@@ -190,6 +192,10 @@ dispatch(#q_get_node{nref = N}, Session) ->
         {Node, Session1} ->
             {{ok, node_to_map(Node)}, Session1}
     end;
+dispatch(#q_get_arcs{nref = N, direction = Dir, arc_kinds = Kinds},
+         Session) ->
+    {Arcs, Session1} = session_read_arcs(Session, N, Dir, Kinds),
+    {{ok, [arc_to_map(A) || A <- Arcs]}, Session1};
 dispatch(_Query, Session) ->
     {{error, not_implemented}, Session}.
 
@@ -217,6 +223,60 @@ session_read_node(#{cache := Cache} = Session, Nref) ->
         Node ->
             {Node, Session}
     end.
+
+%%---------------------------------------------------------------------
+%% session_read_arcs(Session, Nref, Direction, KindFilter)
+%%     -> {[#relationship{}], Session1}
+%%
+%% Cache key is {arcs, Nref, Direction, KindFilter} -- the filter is
+%% part of the key because filters with different shapes are not
+%% interchangeable. (Heuristic refinement deferred until needed.)
+%%---------------------------------------------------------------------
+session_read_arcs(#{cache := Cache} = Session, Nref, Dir, Kinds) ->
+    Key = {arcs, Nref, Dir, Kinds},
+    case maps:get(Key, Cache, miss) of
+        miss ->
+            Arcs = read_arcs(Nref, Dir, Kinds),
+            Cache1 = Cache#{Key => Arcs},
+            {Arcs, Session#{cache := Cache1}};
+        Cached ->
+            {Cached, Session}
+    end.
+
+read_arcs(Nref, outgoing, Kinds) ->
+    Raw = mnesia:dirty_index_read(relationships, Nref,
+                                  #relationship.source_nref),
+    filter_kinds(Raw, Kinds);
+read_arcs(Nref, incoming, Kinds) ->
+    Raw = mnesia:dirty_index_read(relationships, Nref,
+                                  #relationship.target_nref),
+    filter_kinds(Raw, Kinds);
+read_arcs(Nref, both, Kinds) ->
+    read_arcs(Nref, outgoing, Kinds) ++ read_arcs(Nref, incoming, Kinds).
+
+filter_kinds(Arcs, all) -> Arcs;
+filter_kinds(Arcs, Kinds) when is_list(Kinds) ->
+    [A || A <- Arcs, lists:member(A#relationship.kind, Kinds)].
+
+%%---------------------------------------------------------------------
+%% arc_to_map(Rel) -> map()
+%%
+%% Project a #relationship{} record into the public result shape.
+%%---------------------------------------------------------------------
+arc_to_map(#relationship{id               = Id,
+                         kind             = K,
+                         source_nref      = S,
+                         characterization = C,
+                         target_nref      = T,
+                         reciprocal       = R,
+                         avps             = AVPs}) ->
+    #{id               => Id,
+      kind             => K,
+      source_nref      => S,
+      characterization => C,
+      target_nref      => T,
+      reciprocal       => R,
+      avps             => AVPs}.
 
 %%---------------------------------------------------------------------
 %% node_to_map(Node) -> map()
