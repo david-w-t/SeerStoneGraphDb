@@ -44,14 +44,20 @@
     parse_query_is_identity/1,
     new_session_has_snapshot/1,
     refresh_bumps_snapshot/1,
-    unimplemented_query_returns_error/1
+    unimplemented_query_returns_error/1,
+    %% Q1 — get_node
+    q1_returns_bootstrap_node/1,
+    q1_returns_attribute_node/1,
+    q1_not_found_returns_error/1,
+    q1_session_form_returns_session/1,
+    q1_cache_populates_on_read/1
 ]).
 
 suite() ->
     [{timetrap, {seconds, 30}}].
 
 all() ->
-    [{group, skeleton}].
+    [{group, skeleton}, {group, q1_get_node}].
 
 groups() ->
     [{skeleton, [], [
@@ -60,7 +66,14 @@ groups() ->
         new_session_has_snapshot,
         refresh_bumps_snapshot,
         unimplemented_query_returns_error
-    ]}].
+     ]},
+     {q1_get_node, [], [
+        q1_returns_bootstrap_node,
+        q1_returns_attribute_node,
+        q1_not_found_returns_error,
+        q1_session_form_returns_session,
+        q1_cache_populates_on_read
+     ]}].
 
 
 %%---------------------------------------------------------------------
@@ -190,3 +203,47 @@ unimplemented_query_returns_error(_Config) ->
     %% catch-all {error, not_implemented} path, durable across F3 tasks.
     ?assertEqual({error, not_implemented},
                  graphdb_query:execute_query({unknown_query_shape, foo})).
+
+
+%%=====================================================================
+%% Q1 — get_node tests
+%%=====================================================================
+
+q1_returns_bootstrap_node(_Config) ->
+    {ok, Node} = graphdb_query:execute_query(
+        #q_get_node{nref = ?NREF_ROOT}),
+    ?assertEqual(?NREF_ROOT, maps:get(nref, Node)),
+    ?assertEqual(category,   maps:get(kind, Node)),
+    %% Root has no parents
+    ?assertEqual([], maps:get(parents, Node)),
+    ?assertEqual([], maps:get(classes, Node)),
+    ?assert(is_list(maps:get(attribute_value_pairs, Node))).
+
+q1_returns_attribute_node(_Config) ->
+    {ok, Node} = graphdb_query:execute_query(
+        #q_get_node{nref = ?NREF_NAMES}),
+    ?assertEqual(?NREF_NAMES, maps:get(nref, Node)),
+    ?assertEqual(attribute,   maps:get(kind, Node)),
+    ?assertEqual([?NREF_ATTRIBUTES], maps:get(parents, Node)).
+
+q1_not_found_returns_error(_Config) ->
+    ?assertEqual({error, {nref_not_found, 9999999}},
+                 graphdb_query:execute_query(
+                     #q_get_node{nref = 9999999})).
+
+q1_session_form_returns_session(_Config) ->
+    S0 = graphdb_query:new_session(),
+    {ok, Node, S1} = graphdb_query:execute_query(
+        #q_get_node{nref = ?NREF_ROOT}, S0),
+    ?assertEqual(?NREF_ROOT, maps:get(nref, Node)),
+    ?assert(is_map(S1)),
+    %% Snapshot_at must survive — refresh did not happen
+    ?assertEqual(maps:get(snapshot_at, S0),
+                 maps:get(snapshot_at, S1)).
+
+q1_cache_populates_on_read(_Config) ->
+    S0 = graphdb_query:new_session(),
+    {ok, _Node, S1} = graphdb_query:execute_query(
+        #q_get_node{nref = ?NREF_ROOT}, S0),
+    Cache = maps:get(cache, S1),
+    ?assert(maps:is_key({node, ?NREF_ROOT}, Cache)).

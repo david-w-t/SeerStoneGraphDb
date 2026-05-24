@@ -76,7 +76,7 @@
     avps
 }).
 
--compile({nowarn_unused_record, [node, relationship]}).
+-compile({nowarn_unused_record, [relationship]}).
 
 
 %%---------------------------------------------------------------------
@@ -182,8 +182,55 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 %% dispatch(Query, Session) -> {Reply, Session1}
 %% Reply is {ok, _} | {ok, _, _} | {partial, _, _} | {error, _}.
+dispatch(#q_get_node{nref = N}, Session) ->
+    case session_read_node(Session, N) of
+        {not_found, Session1} ->
+            {{error, {nref_not_found, N}}, Session1};
+        {Node, Session1} ->
+            {{ok, node_to_map(Node)}, Session1}
+    end;
 dispatch(_Query, Session) ->
     {{error, not_implemented}, Session}.
+
+%%---------------------------------------------------------------------
+%% session_read_node(Session, Nref) -> {Node | not_found, Session1}
+%%
+%% Read-through cache: cache hit returns immediately; miss reads
+%% Mnesia and populates the cache before returning. The cache key
+%% is {node, Nref}.
+%%---------------------------------------------------------------------
+session_read_node(#{cache := Cache} = Session, Nref) ->
+    case maps:get({node, Nref}, Cache, miss) of
+        miss ->
+            case mnesia:dirty_read(nodes, Nref) of
+                [Node] ->
+                    Cache1 = Cache#{{node, Nref} => Node},
+                    {Node, Session#{cache := Cache1}};
+                [] ->
+                    Cache1 = Cache#{{node, Nref} => not_found},
+                    {not_found, Session#{cache := Cache1}}
+            end;
+        not_found ->
+            {not_found, Session};
+        Node ->
+            {Node, Session}
+    end.
+
+%%---------------------------------------------------------------------
+%% node_to_map(Node) -> map()
+%%
+%% Project a #node{} record into the public result shape.
+%%---------------------------------------------------------------------
+node_to_map(#node{nref                  = N,
+                  kind                  = K,
+                  parents               = P,
+                  classes               = C,
+                  attribute_value_pairs = AVPs}) ->
+    #{nref                  => N,
+      kind                  => K,
+      parents               => P,
+      classes               => C,
+      attribute_value_pairs => AVPs}.
 
 %% drop_session — for /1 calls, strip the trailing session from the reply.
 drop_session({ok, R, _S})            -> {ok, R};
