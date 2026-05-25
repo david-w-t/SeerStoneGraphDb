@@ -232,19 +232,28 @@ delete_dir_recursive(Dir) ->
 
 seeded_nrefs_present(_Config) ->
     {ok, _} = graphdb_language:start_link(),
-    {ok, #{lang_code         := LC,
-           base_language     := BL,
-           project_language  := PL,
-           env_language_code := en}} = graphdb_language:seeded_nrefs(),
+    {ok, #{lang_code               := LC,
+           lang_human              := LH,
+           language_literals_group := LL,
+           base_language           := BL,
+           project_language        := PL,
+           env_language_code       := en}} = graphdb_language:seeded_nrefs(),
     ?assert(is_integer(LC)),
+    ?assert(is_integer(LH)),
+    ?assert(is_integer(LL)),
     ?assert(is_integer(BL)),
     ?assert(is_integer(PL)).
 
 seeded_nrefs_above_floor(_Config) ->
     {ok, _} = graphdb_language:start_link(),
-    {ok, #{lang_code := LC, base_language := BL,
-           project_language := PL}} = graphdb_language:seeded_nrefs(),
+    {ok, #{lang_code               := LC,
+           lang_human              := LH,
+           language_literals_group := LL,
+           base_language           := BL,
+           project_language        := PL}} = graphdb_language:seeded_nrefs(),
     ?assert(LC >= 100000),
+    ?assert(LH >= 100000),
+    ?assert(LL >= 100000),
     ?assert(BL >= 100000),
     ?assert(PL >= 100000).
 
