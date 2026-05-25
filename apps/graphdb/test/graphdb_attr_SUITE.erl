@@ -64,7 +64,7 @@
 	template_avp_marker_stamped/1,
 	template_avp_marker_idempotent/1,
 	seeds_attribute_literals_subgroup/1,
-	reparents_attr_literal_seeds_under_subgroup/1,
+	attr_literal_seeds_parented_under_subgroup/1,
 	%% Creators
 	create_name_attribute_basic/1,
 	create_literal_attribute_stores_type/1,
@@ -114,7 +114,7 @@ groups() ->
 			template_avp_marker_stamped,
 			template_avp_marker_idempotent,
 			seeds_attribute_literals_subgroup,
-			reparents_attr_literal_seeds_under_subgroup
+			attr_literal_seeds_parented_under_subgroup
 		]},
 		{creators, [], [
 			create_name_attribute_basic,
@@ -343,7 +343,7 @@ seeds_attribute_literals_subgroup(_Config) ->
 %% attribute_type must all report the Attribute Literals sub-group as
 %% their direct parent (not nref 7 directly).
 %%-----------------------------------------------------------------------------
-reparents_attr_literal_seeds_under_subgroup(_Config) ->
+attr_literal_seeds_parented_under_subgroup(_Config) ->
 	{ok, _} = graphdb_attr:start_link(),
 	{ok, #{attribute_literals_group := AttrLitNref,
 	       literal_type             := Lt,

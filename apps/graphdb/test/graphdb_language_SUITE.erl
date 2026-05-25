@@ -66,7 +66,7 @@
     seeded_nrefs_above_floor/1,
     language_en_table_created/1,
     seeds_language_literals_subgroup/1,
-    reparents_language_literal_seeds_under_subgroup/1,
+    language_literal_seeds_parented_under_subgroup/1,
     language_seeds_carry_attribute_type_literal/1,
     %% Registration
     register_language_creates_concept_node/1,
@@ -112,7 +112,7 @@ groups() ->
     [{seeding,          [], [seeded_nrefs_present, seeded_nrefs_above_floor,
                              language_en_table_created,
                              seeds_language_literals_subgroup,
-                             reparents_language_literal_seeds_under_subgroup,
+                             language_literal_seeds_parented_under_subgroup,
                              language_seeds_carry_attribute_type_literal]},
      {registration,     [], [register_language_creates_concept_node,
                              register_language_idempotent,
@@ -272,7 +272,7 @@ seeds_language_literals_subgroup(_Config) ->
     ?assertEqual(attribute, Node#node.kind),
     ?assertEqual([?NREF_LITERALS], Node#node.parents).
 
-reparents_language_literal_seeds_under_subgroup(_Config) ->
+language_literal_seeds_parented_under_subgroup(_Config) ->
     {ok, _} = graphdb_language:start_link(),
     {ok, #{language_literals_group := LangLitNref,
            base_language           := BL,
