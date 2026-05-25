@@ -67,6 +67,7 @@
     language_en_table_created/1,
     seeds_language_literals_subgroup/1,
     reparents_language_literal_seeds_under_subgroup/1,
+    language_seeds_carry_attribute_type_literal/1,
     %% Registration
     register_language_creates_concept_node/1,
     register_language_idempotent/1,
@@ -111,7 +112,8 @@ groups() ->
     [{seeding,          [], [seeded_nrefs_present, seeded_nrefs_above_floor,
                              language_en_table_created,
                              seeds_language_literals_subgroup,
-                             reparents_language_literal_seeds_under_subgroup]},
+                             reparents_language_literal_seeds_under_subgroup,
+                             language_seeds_carry_attribute_type_literal]},
      {registration,     [], [register_language_creates_concept_node,
                              register_language_idempotent,
                              register_dialect_creates_concept_node,
@@ -271,6 +273,19 @@ reparents_language_literal_seeds_under_subgroup(_Config) ->
     {ok, PLNode} = graphdb_attr:get_attribute(PL),
     ?assertEqual([LangLitNref], BLNode#node.parents),
     ?assertEqual([LangLitNref], PLNode#node.parents).
+
+language_seeds_carry_attribute_type_literal(_Config) ->
+    {ok, _} = graphdb_language:start_link(),
+    {ok, #{language_literals_group := LangLitNref,
+           base_language           := BL,
+           project_language        := PL}} =
+        graphdb_language:seeded_nrefs(),
+    %% All three nodes should have attribute_type=literal stamped.
+    lists:foreach(
+        fun(Nref) ->
+            ?assertEqual({ok, literal}, graphdb_attr:attribute_type_of(Nref))
+        end,
+        [LangLitNref, BL, PL]).
 
 
 %%=====================================================================

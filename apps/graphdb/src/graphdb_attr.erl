@@ -129,7 +129,9 @@
 		list_relationship_types/0,
 		attribute_type_of/1,
 		%% Seeded nref accessors
-		seeded_nrefs/0
+		seeded_nrefs/0,
+		%% Cross-worker stamping
+		retro_stamp_attribute_types/0
 		]).
 
 %%---------------------------------------------------------------------
@@ -291,6 +293,19 @@ seeded_nrefs() ->
 	gen_server:call(?MODULE, seeded_nrefs).
 
 
+%%-----------------------------------------------------------------------------
+%% retro_stamp_attribute_types() -> ok | {error, term()}
+%%
+%% Re-runs `retro_stamp_bootstrap_attribute_types/1` against the
+%% currently-cached `attribute_type` literal-attribute nref.  Other
+%% workers (graphdb_language, future graphdb_rules) call this after
+%% their own `init/1` seeds attribute-kind nodes so the new nodes
+%% receive the `attribute_type` AVP.
+%%-----------------------------------------------------------------------------
+retro_stamp_attribute_types() ->
+	gen_server:call(?MODULE, retro_stamp_attribute_types).
+
+
 %%=============================================================================
 %% gen_server Behaviour Callbacks
 %%=============================================================================
@@ -383,6 +398,11 @@ handle_call(seeded_nrefs, _From, State) ->
 		attribute_type   => State#state.attribute_type_nref
 	}},
 	{reply, Reply, State};
+
+handle_call(retro_stamp_attribute_types, _From,
+		#state{attribute_type_nref = AtAttr} = State) ->
+	ok = retro_stamp_bootstrap_attribute_types(AtAttr),
+	{reply, ok, State};
 
 handle_call(Request, From, State) ->
 	?UEM(handle_call, {Request, From, State}),

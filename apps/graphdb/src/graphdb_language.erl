@@ -227,6 +227,7 @@ init([]) ->
         ok = ensure_overlay_table(language_en),
         {LangCodeMap, DialectMap} =
             build_lang_maps(LangCodeNref, BaseLangNref, LangHumanNref),
+        ok = graphdb_attr:retro_stamp_attribute_types(),
         logger:info("graphdb_language: started "
             "(lang_code=~p, lang_human=~p, language_literals_group=~p, "
             "base_language=~p, project_language=~p, registered=~p)",
