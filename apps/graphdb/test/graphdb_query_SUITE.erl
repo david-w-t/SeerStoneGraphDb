@@ -81,7 +81,16 @@
     q5_lists_direct_instances/1,
     q5_recursive_includes_subclass_instances/1,
     q5_non_recursive_excludes_subclasses/1,
-    q5_class_with_no_instances/1
+    q5_class_with_no_instances/1,
+    %% Q6 — find_path
+    q6_finds_path_via_taxonomy/1,
+    q6_returns_no_path_when_disconnected/1,
+    q6_respects_max_depth_returns_partial/1,
+    q6_resume_continues_from_frontier/1,
+    q6_arc_kind_filter/1,
+    q6_find_path_3_public_api/1,
+    %% resume / snapshot_expired
+    resume_against_refreshed_session_fails/1
 ]).
 
 suite() ->
@@ -90,7 +99,8 @@ suite() ->
 all() ->
     [{group, skeleton}, {group, q1_get_node}, {group, q1b_get_arcs},
      {group, q2_describe_attribute}, {group, q3_describe_class},
-     {group, q4_describe_instance}, {group, q5_list_instances_of}].
+     {group, q4_describe_instance}, {group, q5_list_instances_of},
+     {group, q6_find_path}].
 
 groups() ->
     [{skeleton, [], [
@@ -142,6 +152,15 @@ groups() ->
         q5_recursive_includes_subclass_instances,
         q5_non_recursive_excludes_subclasses,
         q5_class_with_no_instances
+     ]},
+     {q6_find_path, [], [
+        q6_finds_path_via_taxonomy,
+        q6_returns_no_path_when_disconnected,
+        q6_respects_max_depth_returns_partial,
+        q6_resume_continues_from_frontier,
+        q6_arc_kind_filter,
+        q6_find_path_3_public_api,
+        resume_against_refreshed_session_fails
      ]}].
 
 
@@ -624,3 +643,96 @@ q5_class_with_no_instances(_Config) ->
     ?assertMatch({ok, []},
                  graphdb_query:execute_query(
                      #q_instances_of{class = Veh, recursive = true})).
+
+%%---------------------------------------------------------------------
+%% Q6 — find_path
+%%---------------------------------------------------------------------
+q6_finds_path_via_taxonomy(_Config) ->
+    {ok, Veh} = graphdb_class:create_class("Vehicle", ?NREF_CLASSES),
+    {ok, Car} = graphdb_class:create_class("Car",     Veh),
+    {ok, Path} = graphdb_query:execute_query(
+        #q_find_path{from      = Car,
+                     to        = Veh,
+                     max_depth = 5,
+                     arc_kinds = [taxonomy]}),
+    ?assert(is_list(Path)),
+    ?assertNotEqual([], Path),
+    Last = lists:last(Path),
+    ?assertEqual(Veh, maps:get(to, Last)).
+
+q6_returns_no_path_when_disconnected(_Config) ->
+    {ok, A} = graphdb_class:create_class("A", ?NREF_CLASSES),
+    {ok, B} = graphdb_class:create_class("B", ?NREF_CLASSES),
+    ?assertMatch({ok, no_path},
+                 graphdb_query:execute_query(
+                     #q_find_path{from      = A,
+                                  to        = B,
+                                  max_depth = 5,
+                                  arc_kinds = [taxonomy]})).
+
+q6_respects_max_depth_returns_partial(_Config) ->
+    %% Build a chain A <- B <- C <- D <- E (5 nodes, 4 taxonomy hops)
+    {ok, A} = graphdb_class:create_class("A", ?NREF_CLASSES),
+    {ok, B} = graphdb_class:create_class("B", A),
+    {ok, C} = graphdb_class:create_class("C", B),
+    {ok, D} = graphdb_class:create_class("D", C),
+    {ok, _E} = graphdb_class:create_class("E", D),
+    %% From D up to A is 3 hops; cap at 2 -> partial.
+    Q = #q_find_path{from = D, to = A, max_depth = 2,
+                     arc_kinds = [taxonomy]},
+    Reply = graphdb_query:execute_query(Q),
+    ?assertMatch({partial, _Path, _Cont}, Reply).
+
+q6_resume_continues_from_frontier(_Config) ->
+    {ok, A} = graphdb_class:create_class("A", ?NREF_CLASSES),
+    {ok, B} = graphdb_class:create_class("B", A),
+    {ok, C} = graphdb_class:create_class("C", B),
+    {ok, D} = graphdb_class:create_class("D", C),
+    Q = #q_find_path{from = D, to = A, max_depth = 2,
+                     arc_kinds = [taxonomy]},
+    S0 = graphdb_query:new_session(),
+    {partial, _PartialPath, Cont, S1} =
+        graphdb_query:execute_query(Q, S0),
+    {ok, FullPath, _S2} = graphdb_query:resume(Cont, S1),
+    Last = lists:last(FullPath),
+    ?assertEqual(A, maps:get(to, Last)).
+
+q6_arc_kind_filter(_Config) ->
+    %% B (child) -> A (parent) via composition; restricting to taxonomy
+    %% yields no_path because the path is purely compositional.
+    {ok, Cls} = graphdb_class:create_class("Cls", ?NREF_CLASSES),
+    {ok, A}   = graphdb_instance:create_instance(
+                    "A", Cls, ?NREF_PROJECTS),
+    {ok, B}   = graphdb_instance:create_instance("B", Cls, A),
+    {ok, [_|_]} = graphdb_query:execute_query(
+        #q_find_path{from      = B,
+                     to        = A,
+                     max_depth = 5,
+                     arc_kinds = [composition]}),
+    ?assertMatch({ok, no_path},
+                 graphdb_query:execute_query(
+                     #q_find_path{from      = B,
+                                  to        = A,
+                                  max_depth = 5,
+                                  arc_kinds = [taxonomy]})).
+
+q6_find_path_3_public_api(_Config) ->
+    {ok, A} = graphdb_class:create_class("A", ?NREF_CLASSES),
+    {ok, B} = graphdb_class:create_class("B", A),
+    {ok, Path} = graphdb_query:find_path(B, A, 5),
+    ?assert(is_list(Path)),
+    ?assertNotEqual([], Path).
+
+resume_against_refreshed_session_fails(_Config) ->
+    {ok, A} = graphdb_class:create_class("A", ?NREF_CLASSES),
+    {ok, B} = graphdb_class:create_class("B", A),
+    {ok, C} = graphdb_class:create_class("C", B),
+    {ok, _D} = graphdb_class:create_class("D", C),
+    Q = #q_find_path{from = C, to = A, max_depth = 1,
+                     arc_kinds = [taxonomy]},
+    S0 = graphdb_query:new_session(),
+    {partial, _, Cont, S1} = graphdb_query:execute_query(Q, S0),
+    timer:sleep(2),
+    S2 = graphdb_query:refresh(S1),
+    ?assertEqual({error, snapshot_expired},
+                 graphdb_query:resume(Cont, S2)).

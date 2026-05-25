@@ -13,8 +13,9 @@
 %%              is real. Q1 (#q_get_node{}), Q1b (#q_get_arcs{}), Q2
 %%              (#q_describe{} for kind=attribute), Q3 (#q_describe{}
 %%              for kind=class), Q4 (#q_describe{} for kind=instance),
-%%              and Q5 (#q_instances_of{}) are implemented; Q6 returns
-%%              {error, not_implemented} until Task 9.
+%%              Q5 (#q_instances_of{}), and Q6 (#q_find_path{}) are
+%%              implemented along with resume/2 and snapshot_expired
+%%              detection.  F3 walking skeleton complete.
 %%
 %% Design source: f3-graphdb-query-design.md at project root.
 %%---------------------------------------------------------------------
@@ -34,6 +35,8 @@
 %% Q4 (#q_describe{} for kind=instance) implemented (F3 Task 7).
 %% Rev A.6 Date: May 2026 Author: David W. Thomas
 %% Q5 (#q_instances_of{}) implemented (F3 Task 8).
+%% Rev A.7 Date: May 2026 Author: David W. Thomas
+%% Q6 (#q_find_path{}) + resume/2 + snapshot_expired (F3 Task 9).
 %%---------------------------------------------------------------------
 -module(graphdb_query).
 -behaviour(gen_server).
@@ -170,8 +173,21 @@ handle_call({execute_query_1, Query}, _From, State) ->
 handle_call({execute_query_2, Query, Session}, _From, State) ->
     {Reply, Session1} = dispatch(Query, Session),
     {reply, attach_session(Reply, Session1), State};
-handle_call({resume, _Cont, _Session}, _From, State) ->
-    {reply, {error, not_implemented}, State};
+handle_call({resume, #cont_path{snapshot_at = ContSnap},
+             #{snapshot_at := SessSnap}}, _From, State)
+    when ContSnap =/= SessSnap ->
+    {reply, {error, snapshot_expired}, State};
+handle_call({resume, #cont_path{target          = To,
+                                arc_kinds       = Kinds,
+                                remaining_depth = NextBudget,
+                                visited         = Visited,
+                                frontier        = Frontier},
+             Session}, _From, State) ->
+    SnapshotAt = maps:get(snapshot_at, Session),
+    {Reply, Session1} =
+        bfs(SnapshotAt, To, NextBudget, NextBudget, Kinds,
+            Visited, Frontier, Session),
+    {reply, attach_session(Reply, Session1), State};
 handle_call(Request, From, State) ->
     ?UEM(handle_call, {Request, From, State}),
     {noreply, State}.
@@ -233,6 +249,16 @@ dispatch(#q_instances_of{class = C, recursive = Recursive}, Session) ->
             {Members ++ Acc, S1}
         end, {[], Session}, Classes),
     {{ok, lists:usort(Instances)}, Session1};
+dispatch(#q_find_path{from = From, to = To, max_depth = D,
+                       arc_kinds = Kinds}, Session) ->
+    SnapshotAt = maps:get(snapshot_at, Session),
+    %% Initial budget D doubles as the resume budget — partial conts
+    %% carry max_depth as remaining_depth so resume gets a fresh full
+    %% allotment rather than the exhausted 0.
+    bfs(SnapshotAt, To, D, D, Kinds,
+        #{From => true},
+        [{From, []}],
+        Session);
 dispatch(_Query, Session) ->
     {{error, not_implemented}, Session}.
 
@@ -579,6 +605,103 @@ all_subclasses(C) ->
     {ok, Direct} = graphdb_class:subclasses(C),
     DirectNrefs = [N#node.nref || N <- Direct],
     DirectNrefs ++ lists:flatmap(fun all_subclasses/1, DirectNrefs).
+
+%%---------------------------------------------------------------------
+%% bfs(SnapshotAt, Target, ResumeBudget, RemainingDepth, ArcKinds,
+%%     Visited, Frontier, Session) -> {Reply, Session1}
+%%
+%%     Frontier   :: [{Nref, PathToHere}]
+%%     PathToHere :: [#{from, via, to, kind}]   (edges already taken)
+%%
+%% ResumeBudget is the original max_depth — stored on the cont so resume
+%% gets a fresh full allotment, not the exhausted 0.  RemainingDepth is
+%% the budget for THIS run of bfs.
+%%
+%% Returns:
+%%   {{ok, EdgeList}, Session1}                       -- target found
+%%   {{ok, no_path}, Session1}                        -- frontier emptied
+%%   {{partial, BestSoFar, #cont_path{}}, Session1}   -- depth-bounded
+%%---------------------------------------------------------------------
+bfs(_Snap, _To, _Budget, _D, _Kinds, _Vis, [], Session) ->
+    {{ok, no_path}, Session};
+bfs(Snap, To, Budget, 0, Kinds, Vis, Frontier, Session) ->
+    %% Depth exhausted but frontier non-empty -- partial.
+    BestSoFar = case Frontier of
+        [{_, P} | _] -> P;
+        []           -> []
+    end,
+    Cont = #cont_path{snapshot_at     = Snap,
+                      target          = To,
+                      arc_kinds       = Kinds,
+                      remaining_depth = Budget,
+                      visited         = Vis,
+                      frontier        = Frontier},
+    {{partial, BestSoFar, Cont}, Session};
+bfs(Snap, To, Budget, D, Kinds, Vis, Frontier, Session) ->
+    {NextFrontier, Vis1, FoundPath, Session1} =
+        bfs_step(To, Kinds, Frontier, Vis, Session),
+    case FoundPath of
+        {found, Path} ->
+            {{ok, Path}, Session1};
+        not_found ->
+            bfs(Snap, To, Budget, D - 1, Kinds, Vis1, NextFrontier,
+                Session1)
+    end.
+
+bfs_step(To, Kinds, Frontier, Vis, Session) ->
+    lists:foldl(
+        fun({Nref, PathToHere}, {Acc, V, Found, S}) ->
+            case Found of
+                {found, _} ->
+                    {Acc, V, Found, S};
+                not_found ->
+                    {Arcs, S1} = session_read_arcs(S, Nref, outgoing,
+                                                   Kinds),
+                    expand_arcs(To, Nref, PathToHere, Arcs, V, Acc,
+                                Found, S1)
+            end
+        end, {[], Vis, not_found, Session}, Frontier).
+
+expand_arcs(_To, _From, _PathHere, [], V, Acc, Found, S) ->
+    {Acc, V, Found, S};
+expand_arcs(To, From, PathHere,
+            [#relationship{kind             = K,
+                           characterization = C,
+                           target_nref      = T} | Rest],
+            V, Acc, Found, S) ->
+    Edge = #{from => From, via => C, to => T, kind => K},
+    NewPath = PathHere ++ [Edge],
+    case T of
+        To ->
+            {Acc, V, {found, NewPath}, S};
+        _ ->
+            case maps:is_key(T, V) orelse is_scaffold_node(T) of
+                true ->
+                    expand_arcs(To, From, PathHere, Rest, V, Acc,
+                                Found, S);
+                false ->
+                    V1 = V#{T => true},
+                    Acc1 = Acc ++ [{T, NewPath}],
+                    expand_arcs(To, From, PathHere, Rest, V1, Acc1,
+                                Found, S)
+            end
+    end.
+
+%%---------------------------------------------------------------------
+%% is_scaffold_node(Nref) -> boolean()
+%%
+%% Category nodes are structural scaffold (nrefs 1-5) -- never
+%% traversed by graph queries.  Matches the semantics already encoded
+%% in graphdb_class:ancestors/1 which filters NREF_CLASSES out of the
+%% taxonomy walk.  Without this filter, two classes sharing only
+%% NREF_CLASSES as a parent would be considered taxonomically
+%% connected, which contradicts both the design and existing helpers.
+%%---------------------------------------------------------------------
+is_scaffold_node(Nref) ->
+    case mnesia:dirty_read(nodes, Nref) of
+        [#node{kind = category}] -> true;
+        _                        -> false
+    end.
 
 %%---------------------------------------------------------------------
 %% node_to_map(Node) -> map()
