@@ -17,7 +17,7 @@
 %%              implemented along with resume/2 and snapshot_expired
 %%              detection.  F3 walking skeleton complete.
 %%
-%% Design source: f3-graphdb-query-design.md at project root.
+%% Design source: docs/f3-graphdb-query-design.md.
 %%---------------------------------------------------------------------
 %% Revision History
 %%---------------------------------------------------------------------

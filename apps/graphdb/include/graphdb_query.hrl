@@ -6,7 +6,7 @@
 %% language. Records (not maps) for dialyzer support; matches project
 %% style.
 %%
-%% Design source: f3-graphdb-query-design.md at project root.
+%% Design source: docs/f3-graphdb-query-design.md.
 %%---------------------------------------------------------------------
 
 -ifndef(GRAPHDB_QUERY_HRL).
