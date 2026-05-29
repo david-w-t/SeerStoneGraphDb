@@ -150,7 +150,7 @@ Two database roles:
 The environment is shared across all projects. Only bootstrap nrefs (1–35) and a small number of explicitly seeded runtime nrefs (e.g., `target_kind`) are referenced by nref constant in code — all other runtime-added nodes are treated generically.
 
 nref spaces:
-- **Environment**: bootstrap nrefs 1–35; runtime nrefs 10000+ (protected by `{nref_start, 10000}` in `bootstrap.terms`)
+- **Environment**: scaffold nrefs 1–35; permanent seeds in 10000–`nref_start`−1 (English = 10000; loader-assigned atom labels start at `label_start` = 10001); runtime allocations ≥ `nref_start` (1000000). Both boundaries declared as directives in `bootstrap.terms`.
 - **Project**: allocator starts at **1** — no pre-assigned nrefs, no bootstrap file, no floor needed
 
 Cross-database nref resolution: `characterization` and `reciprocal` fields always reference environment nrefs; `target_nref` is routed to environment or project based on the arc label's `target_kind` AVP stored in the environment attribute library.
@@ -332,6 +332,22 @@ detail.
 - Internal refactors that don't change the contract.
 - Bug fixes, style changes, comment edits, test additions.
 - Implementation progress within an already-described component.
+
+`docs/diagrams/ontology-tree.md` is the visual reference for the
+post-bootstrap + init-seeded environment ontology. The Mermaid block in
+that file must reflect the current shape of the tree.
+
+**Update `docs/diagrams/ontology-tree.md` when:**
+- `apps/graphdb/priv/bootstrap.terms` adds, removes, or reparents a node.
+- Any `init/1` in `graphdb_attr`, `graphdb_class`, `graphdb_instance`,
+  or `graphdb_language` adds, removes, or reparents a runtime-seeded
+  node, sub-group, or arc-label that belongs in the environment tree.
+- A new `graphdb_*` worker is added that seeds at startup.
+
+**Don't update `docs/diagrams/ontology-tree.md` for:**
+- Per-test or per-project instance-DB additions (the diagram is
+  environment-only).
+- Internal refactors that leave the seed shape unchanged.
 
 The canonical spec is `the-knowledge-network.md` — it does **not** track
 the code. Outstanding work lives in `TASKS.md`.

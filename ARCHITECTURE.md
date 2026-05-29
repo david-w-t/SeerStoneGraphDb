@@ -161,7 +161,8 @@ Five top-level categories are pre-assigned at bootstrap:
 
 The bootstrap loads 38 nodes in total: the 35-node BFS scaffold (nrefs
 1–35), the permanent English instance seed (nref 10000), and 2 labeled
-runtime nodes (`lang_code`, `lang_human` — nrefs ≥ 100000). The full
+permanent nodes (`lang_code`, `lang_human` — nrefs assigned by the
+loader's local counter starting at `label_start` = 10001). The full
 content is documented in `apps/graphdb/priv/bootstrap.terms`. Code that
 needs specific nrefs uses the constants defined as macros in the worker
 that owns them (`graphdb_attr`, `graphdb_class`, `graphdb_instance`).
@@ -329,18 +330,33 @@ always exists regardless of its visibility.
 
 Bootstrap introduces three nref tiers:
 
-| Tier                     | Range           | Contents                                              |
-| ------------------------ | --------------- | ----------------------------------------------------- |
-| Scaffold                 | 1 – 9 999       | Pre-assigned category/attribute bootstrap nodes       |
-| Permanent concept seeds  | 10 000 – 99 999 | Pre-assigned first-class ontology seeds (e.g., English nref 10000) |
-| Runtime                  | 100 000+        | All runtime allocations — symbol-table labels + relationship IDs |
+| Tier                    | Range                          | Contents                                                                                                                                |
+| ----------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Scaffold                | 1 – 9 999                      | Pre-assigned category/attribute bootstrap nodes                                                                                         |
+| Permanent concept seeds | 10 000 – `nref_start` − 1      | Pre-assigned first-class ontology seeds (e.g., English nref 10000) plus loader-assigned atom-labeled nodes starting at `label_start`    |
+| Runtime                 | ≥ `nref_start`                 | All post-bootstrap allocations from `nref_server` — runtime-seeded sub-groups, instance/class APIs, relationship row IDs                |
+
+Boundaries live in `bootstrap.terms`:
+
+```erlang
+{nref_start, 1000000}.   %% boundary between permanent and runtime
+{label_start,   10001}.  %% start of the loader's local label counter
+                         %% (English nref 10000 + 1)
+```
 
 Single global allocator served by `nref_server` / `nref_allocator`,
 DETS-backed. Counter starts at 1 on a fresh node. `graphdb_bootstrap`
-calls `nref_server:set_floor(100000)` once during the first scaffold
-load, advancing the counter into the runtime tier. All subsequent
-runtime allocations (symbol-table labels and relationship IDs) are
-≥ 100000.
+assigns atom-labeled node nrefs from a **local counter** starting at
+`label_start`, then calls `nref_server:set_floor(nref_start)` so that
+every subsequent allocation (relationship row IDs from `rel_id_server`,
+runtime-seeded nodes from `nref_server`) lands in the runtime tier.
+
+`nref_start` is the soft trigger for switching label allocation over to
+`nref_server:get_nref/0`; the spill-over path is not implemented today,
+so the loader throws `{labels_exceeded_nref_start, ...}` if the local
+counter would cross the boundary. With `nref_start = 1 000 000` and
+`label_start = 10 001`, the permanent tier has roughly 990 000 free
+slots — practical spill-over is not expected.
 
 ### Project allocators
 
@@ -374,11 +390,12 @@ sets it.
 
 ### Bootstrap file format
 
-Erlang terms via `file:consult/1`. Three term shapes (full schema in
+Erlang terms via `file:consult/1`. Four term shapes (full schema in
 `graphdb_bootstrap.erl`):
 
 ```erlang
-{nref_start, N}.
+{nref_start,  N}.
+{label_start, N}.
 {node, Nref, Kind, {NameAttrNref, NameValue}, ExtraAVPs}.
 {relationship, N1, R1, AVPs1, R2, N2, AVPs2, Kind}.
 ```
