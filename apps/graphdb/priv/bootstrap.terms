@@ -8,29 +8,6 @@
 %% nodes table is empty.  The file is never consulted again after a successful
 %% load.  Tier boundaries are macros in graphdb_nrefs.hrl, not file directives.
 %%
-%% Nref tiers:
-%%   scaffold   (1–9 999):              pre-assigned category/attribute nodes
-%%   permanent  (10 000–nref_start-1):  first-class concept seeds, either
-%%                                      pre-assigned (e.g. English = 10000)
-%%                                      or labeled atoms allocated at load
-%%                                      time by the two-pass loader from a
-%%                                      local counter starting at label_start
-%%   runtime    (>= nref_start):        dynamically allocated by
-%%                                      nref_server:get_nref/0 after the
-%%                                      loader calls set_floor(nref_start)
-%%
-%% English (10000) is the floor of the permanent tier; label_start sits
-%% immediately above it (10001).
-%%
-%% nref_start is the boundary that triggers a switch to nref_server
-%% allocation; it is NOT an enforced limit on the label counter today.
-%% A future enhancement may let the loader spill over to get_nref/0 once
-%% the counter reaches nref_start; for now the loader simply throws if
-%% labels would cross that boundary.
-%%
-%% Relationship record IDs are allocated by nref_server:get_nref/0 after
-%% set_floor, so they always land in the runtime tier.
-%%
 %% Node tuple shape (Option B, post-H0d):
 %%   {node, Nref, Kind, {NameAttrNref, NameValue}, ExtraAVPs}
 %% Hierarchy is encoded *only* in the relationship arcs below.  The loader

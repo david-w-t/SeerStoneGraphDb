@@ -389,10 +389,12 @@ validate_relationships(Rels) ->
 %% (LabelStart .. NrefStart-1), immediately above the pre-assigned
 %% permanent seeds (English et al).
 %%
-%% Called BEFORE nref_server:set_floor/1, so the loader's counter is the
-%% sole source of label nrefs.  Throws {labels_exceeded_nref_start, ...}
-%% if the counter would reach NrefStart (spill-over to runtime tier via
-%% get_nref/0 is not implemented yet -- see bootstrap.terms header).
+%% Labels are allocated from the loader's local counter (not from
+%% nref_server:get_nref/0). The runtime floor is set later by
+%% graphdb:start/2's phase flip, not by the loader.
+%% Throws {labels_exceeded_nref_start, ...} if the counter would reach
+%% NrefStart (spill-over to runtime tier via get_nref/0 is not implemented
+%% yet -- see bootstrap.terms header).
 %%
 %%-----------------------------------------------------------------------------
 build_symbol_table(Nodes, Rels, LabelStart, NrefStart) ->
