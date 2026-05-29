@@ -186,6 +186,10 @@ end_per_testcase(TC, Config) ->
 	catch application:stop(nref),
 	catch mnesia:stop(),
 
+	%% Defensive: clear the graphdb_nref phase flag in case a prior suite
+	%% in the same VM left it set (this suite never sets it itself).
+	catch persistent_term:erase({graphdb_nref, phase}),
+
 	%% Close any lingering DETS tables
 	catch dets:close(nref_server),
 	catch dets:close(nref_allocator),
