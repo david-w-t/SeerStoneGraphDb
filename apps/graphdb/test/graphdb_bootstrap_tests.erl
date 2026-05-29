@@ -20,149 +20,53 @@
 
 classify_terms_valid_test() ->
 	Terms = [
-		{nref_start, 100},
-		{label_start, 50},
 		{node, 1, category, {17, "Root"}, []},
 		{node, 6, attribute, {18, "Names"}, []},
 		{relationship, 1, 22, [], 21, 2, [], composition}
 	],
-	{NrefStart, LabelStart, Nodes, Rels} =
-		graphdb_bootstrap:classify_terms(Terms),
-	?assertEqual(100, NrefStart),
-	?assertEqual(50, LabelStart),
+	{Nodes, Rels} = graphdb_bootstrap:classify_terms(Terms),
 	?assertEqual(2, length(Nodes)),
 	?assertEqual(1, length(Rels)).
 
 classify_terms_sorts_by_kind_test() ->
 	Terms = [
-		{nref_start, 100},
-		{label_start, 50},
 		{node, 6, attribute, {18, "Names"}, []},
 		{node, 1, category, {17, "Root"}, []}
 	],
-	{_, _, Nodes, _} = graphdb_bootstrap:classify_terms(Terms),
+	{Nodes, _} = graphdb_bootstrap:classify_terms(Terms),
 	%% category should come before attribute regardless of file order
 	[{node, 1, category, _, _}, {node, 6, attribute, _, _}] = Nodes.
 
 classify_terms_preserves_relationship_order_test() ->
 	Terms = [
-		{nref_start, 100},
-		{label_start, 50},
 		{relationship, 1, 22, [], 21, 2, [], composition},
 		{relationship, 1, 22, [], 21, 3, [], composition},
 		{relationship, 2, 24, [], 23, 6, [], taxonomy}
 	],
-	{_, _, _, Rels} = graphdb_bootstrap:classify_terms(Terms),
+	{_, Rels} = graphdb_bootstrap:classify_terms(Terms),
 	?assertEqual(3, length(Rels)),
 	%% File order preserved
 	{relationship, 1, 22, [], 21, 2, [], composition} = lists:nth(1, Rels),
 	{relationship, 1, 22, [], 21, 3, [], composition} = lists:nth(2, Rels),
 	{relationship, 2, 24, [], 23, 6, [], taxonomy} = lists:nth(3, Rels).
 
-classify_terms_missing_nref_start_test() ->
-	Terms = [{node, 1, category, {17, "Root"}, []}],
-	?assertThrow({error, missing_nref_start},
-		graphdb_bootstrap:classify_terms(Terms)).
-
-classify_terms_missing_label_start_test() ->
-	%% nref_start present but label_start missing
-	Terms = [{nref_start, 100}, {node, 1, category, {17, "Root"}, []}],
-	?assertThrow({error, missing_label_start},
-		graphdb_bootstrap:classify_terms(Terms)).
-
-classify_terms_duplicate_nref_start_test() ->
-	Terms = [{nref_start, 100}, {nref_start, 200}],
-	?assertThrow({error, duplicate_nref_start},
-		graphdb_bootstrap:classify_terms(Terms)).
-
-classify_terms_duplicate_label_start_test() ->
-	Terms = [{nref_start, 100}, {label_start, 50}, {label_start, 60}],
-	?assertThrow({error, duplicate_label_start},
-		graphdb_bootstrap:classify_terms(Terms)).
-
-classify_terms_invalid_nref_start_test() ->
-	%% nref_start must be a positive integer
-	Terms = [{nref_start, -5}],
-	?assertThrow({error, {invalid_nref_start, -5}},
-		graphdb_bootstrap:classify_terms(Terms)).
-
-classify_terms_zero_nref_start_test() ->
-	Terms = [{nref_start, 0}],
-	?assertThrow({error, {invalid_nref_start, 0}},
-		graphdb_bootstrap:classify_terms(Terms)).
-
-classify_terms_invalid_label_start_test() ->
-	%% label_start must be a positive integer
-	Terms = [{nref_start, 100}, {label_start, -5}],
-	?assertThrow({error, {invalid_label_start, -5}},
-		graphdb_bootstrap:classify_terms(Terms)).
-
-classify_terms_zero_label_start_test() ->
-	Terms = [{nref_start, 100}, {label_start, 0}],
-	?assertThrow({error, {invalid_label_start, 0}},
-		graphdb_bootstrap:classify_terms(Terms)).
+classify_terms_empty_returns_empty_test() ->
+	?assertEqual({[], []}, graphdb_bootstrap:classify_terms([])).
 
 classify_terms_unknown_term_test() ->
-	Terms = [{nref_start, 100}, {label_start, 50}, {bogus, stuff}],
 	?assertThrow({error, {unknown_term, {bogus, stuff}}},
-		graphdb_bootstrap:classify_terms(Terms)).
-
-classify_terms_empty_test() ->
-	?assertThrow({error, missing_nref_start},
-		graphdb_bootstrap:classify_terms([])).
-
-classify_terms_nref_start_only_test() ->
-	%% nref_start without label_start triggers missing_label_start
-	?assertThrow({error, missing_label_start},
-		graphdb_bootstrap:classify_terms([{nref_start, 100}])).
-
-classify_terms_both_directives_only_test() ->
-	{100, 50, [], []} =
-		graphdb_bootstrap:classify_terms([{nref_start, 100}, {label_start, 50}]).
-
-classify_terms_directives_in_any_order_test() ->
-	%% label_start before nref_start should also work
-	{100, 50, [], []} =
-		graphdb_bootstrap:classify_terms([{label_start, 50}, {nref_start, 100}]).
+		graphdb_bootstrap:classify_terms([{bogus, stuff}])).
 
 classify_terms_all_four_kinds_test() ->
 	Terms = [
-		{nref_start, 100},
-		{label_start, 70},
 		{node, 1, category, {17, "Root"}, []},
 		{node, 6, attribute, {18, "Attr"}, []},
 		{node, 50, class, {19, "Cls"}, []},
 		{node, 60, instance, {20, "Inst"}, []}
 	],
-	{_, _, Nodes, _} = graphdb_bootstrap:classify_terms(Terms),
+	{Nodes, _} = graphdb_bootstrap:classify_terms(Terms),
 	Kinds = [Kind || {node, _, Kind, _, _} <- Nodes],
 	?assertEqual([category, attribute, class, instance], Kinds).
-
-
-%%=============================================================================
-%% validate_label_start/2 tests
-%%=============================================================================
-
-validate_label_start_valid_test() ->
-	?assertEqual(ok, graphdb_bootstrap:validate_label_start(50, 100)).
-
-validate_label_start_at_floor_test() ->
-	%% LabelStart == NrefStart means the first allocation would immediately
-	%% cross into the runtime tier — reject.
-	?assertThrow({error, {label_start_out_of_range, 100, 100}},
-		graphdb_bootstrap:validate_label_start(100, 100)).
-
-validate_label_start_above_floor_test() ->
-	?assertThrow({error, {label_start_out_of_range, 101, 100}},
-		graphdb_bootstrap:validate_label_start(101, 100)).
-
-validate_label_start_zero_test() ->
-	?assertThrow({error, {label_start_out_of_range, 0, 100}},
-		graphdb_bootstrap:validate_label_start(0, 100)).
-
-validate_label_start_negative_test() ->
-	?assertThrow({error, {label_start_out_of_range, -1, 100}},
-		graphdb_bootstrap:validate_label_start(-1, 100)).
 
 
 %%=============================================================================

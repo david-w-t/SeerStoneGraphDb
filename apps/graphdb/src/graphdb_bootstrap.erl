@@ -101,7 +101,6 @@
 		classify_terms/1,
 		sort_nodes_by_kind/1,
 		validate/2,
-		validate_label_start/2,
 		validate_relationships/1,
 		term_to_node/1,
 		expand_avps/1,
@@ -235,20 +234,15 @@ do_load() ->
 	logger:info("graphdb_bootstrap: loading ~s", [File]),
 	case file:consult(File) of
 		{ok, Terms} ->
-			{NrefStart, LabelStart, Nodes, Rels} = classify_terms(Terms),
-			ok = validate_label_start(LabelStart, NrefStart),
-			ok = validate(NrefStart, Nodes),
+			{Nodes, Rels} = classify_terms(Terms),
+			ok = validate(?NREF_START, Nodes),
 			ok = validate_relationships(Rels),
-			%% Build the symbol table FIRST, with a local counter starting
-			%% at LabelStart.  Labels land in the permanent tier.
-			SymTable = build_symbol_table(Nodes, Rels, LabelStart, NrefStart),
-			%% Now hand the floor to nref_server so that every subsequent
-			%% get_nref/0 call (relationship row IDs, runtime APIs) returns
-			%% a runtime-tier nref >= NrefStart.
-			logger:info("graphdb_bootstrap: set_floor(~p) "
-				"(label_start=~p, allocated_labels=~p)",
-				[NrefStart, LabelStart, maps:size(SymTable)]),
-			ok = nref_server:set_floor(NrefStart),
+			%% Allocate atom-label nrefs from a local counter in the
+			%% permanent tier [?LABEL_START, ?NREF_START).  The runtime
+			%% floor is set later by graphdb:start/2's phase flip, not here.
+			SymTable = build_symbol_table(Nodes, Rels, ?LABEL_START, ?NREF_START),
+			logger:info("graphdb_bootstrap: allocated ~p label nrefs from ~p",
+				[maps:size(SymTable), ?LABEL_START]),
 			{ResNodes, ResRels} = apply_symbol_table(Nodes, Rels, SymTable),
 			ok = validate_no_unresolved_labels(ResNodes, ResRels),
 			ok = write_nodes(ResNodes),
@@ -264,21 +258,6 @@ do_load() ->
 		{error, Reason} ->
 			throw({error, {consult_failed, File, Reason}})
 	end.
-
-
-%%-----------------------------------------------------------------------------
-%% validate_label_start(LabelStart, NrefStart) -> ok
-%%
-%% LabelStart must be a positive integer strictly below NrefStart;
-%% otherwise labels would collide with the runtime tier from the first
-%% allocation.
-%%-----------------------------------------------------------------------------
-validate_label_start(LabelStart, NrefStart)
-		when is_integer(LabelStart), LabelStart > 0,
-		     is_integer(NrefStart),  LabelStart < NrefStart ->
-	ok;
-validate_label_start(LabelStart, NrefStart) ->
-	throw({error, {label_start_out_of_range, LabelStart, NrefStart}}).
 
 
 %%-----------------------------------------------------------------------------
@@ -315,46 +294,23 @@ get_bootstrap_file() ->
 
 
 %%-----------------------------------------------------------------------------
-%% classify_terms(Terms) -> {NrefStart, LabelStart, SortedNodes, Relationships}
+%% classify_terms(Terms) -> {SortedNodes, Relationships}
 %%
-%% Partitions the flat term list into the nref_start value, the
-%% label_start value, a list of node terms sorted by kind (category
-%% first), and a list of relationship terms in file order.
-%%
-%% Both nref_start and label_start are mandatory directives.  Validation
-%% of label_start's range against nref_start happens later in do_load/0.
+%% Partitions the flat term list into node terms (sorted by kind, category
+%% first) and relationship terms (file order).  Tier boundaries are header
+%% macros, not directives — any non node/relationship term is rejected.
 %%-----------------------------------------------------------------------------
 classify_terms(Terms) ->
-	classify_terms(Terms, undefined, undefined, [], []).
+	classify_terms(Terms, [], []).
 
-classify_terms([], undefined, _LabelStart, _Nodes, _Rels) ->
-	throw({error, missing_nref_start});
-classify_terms([], _NrefStart, undefined, _Nodes, _Rels) ->
-	throw({error, missing_label_start});
-classify_terms([], NrefStart, LabelStart, Nodes, Rels) ->
-	{NrefStart, LabelStart,
-	 sort_nodes_by_kind(lists:reverse(Nodes)),
-	 lists:reverse(Rels)};
-classify_terms([{nref_start, N} | Rest], undefined, LabelStart, Nodes, Rels)
-		when is_integer(N), N > 0 ->
-	classify_terms(Rest, N, LabelStart, Nodes, Rels);
-classify_terms([{nref_start, N} | _Rest], undefined, _LabelStart, _Nodes, _Rels) ->
-	throw({error, {invalid_nref_start, N}});
-classify_terms([{nref_start, _} | _Rest], _Already, _LabelStart, _Nodes, _Rels) ->
-	throw({error, duplicate_nref_start});
-classify_terms([{label_start, N} | Rest], NrefStart, undefined, Nodes, Rels)
-		when is_integer(N), N > 0 ->
-	classify_terms(Rest, NrefStart, N, Nodes, Rels);
-classify_terms([{label_start, N} | _Rest], _NrefStart, undefined, _Nodes, _Rels) ->
-	throw({error, {invalid_label_start, N}});
-classify_terms([{label_start, _} | _Rest], _NrefStart, _Already, _Nodes, _Rels) ->
-	throw({error, duplicate_label_start});
-classify_terms([{node, _, _, _, _} = Node | Rest], NrefStart, LabelStart, Nodes, Rels) ->
-	classify_terms(Rest, NrefStart, LabelStart, [Node | Nodes], Rels);
-classify_terms([{relationship, _, _, _, _, _, _, _} = Rel | Rest], NrefStart, LabelStart, Nodes, Rels) ->
-	classify_terms(Rest, NrefStart, LabelStart, Nodes, [Rel | Rels]);
-classify_terms([Unknown | _Rest], _NrefStart, _LabelStart, _Nodes, _Rels) ->
-	throw({error, {unknown_term, Unknown}}).
+classify_terms([], Nodes, Rels) ->
+	{sort_nodes_by_kind(lists:reverse(Nodes)), lists:reverse(Rels)};
+classify_terms([{node, _, _, _, _} = Node | Rest], Nodes, Rels) ->
+	classify_terms(Rest, [Node | Nodes], Rels);
+classify_terms([{relationship, _, _, _, _, _, _, _} = Rel | Rest], Nodes, Rels) ->
+	classify_terms(Rest, Nodes, [Rel | Rels]);
+classify_terms([Other | _Rest], _Nodes, _Rels) ->
+	throw({error, {unknown_term, Other}}).
 
 
 %%-----------------------------------------------------------------------------

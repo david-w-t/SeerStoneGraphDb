@@ -68,7 +68,6 @@
 	load_relationship_structure/1,
 	load_relationship_ids_above_floor/1,
 	load_relationship_reciprocal_pairs/1,
-	load_nref_floor_set/1,
 	load_idempotent/1,
 	load_english_instance/1,
 	load_labeled_nodes/1,
@@ -76,7 +75,6 @@
 	load_missing_config/1,
 	load_nonexistent_file/1,
 	load_invalid_terms/1,
-	load_missing_nref_start/1,
 	load_nref_above_floor/1
 ]).
 
@@ -105,7 +103,6 @@ groups() ->
 			load_relationship_structure,
 			load_relationship_ids_above_floor,
 			load_relationship_reciprocal_pairs,
-			load_nref_floor_set,
 			load_idempotent,
 			load_english_instance,
 			load_labeled_nodes,
@@ -115,7 +112,6 @@ groups() ->
 			load_missing_config,
 			load_nonexistent_file,
 			load_invalid_terms,
-			load_missing_nref_start,
 			load_nref_above_floor
 		]}
 	].
@@ -410,18 +406,6 @@ load_relationship_reciprocal_pairs(_Config) ->
 	end, AllRels).
 
 %%-----------------------------------------------------------------------------
-%% Verify the nref floor was set: next nref from nref_server is >= 1000000.
-%% Symbol-table labels come from the loader's local counter (not nref_server)
-%% and relationship row IDs come from rel_id_server, so nothing should have
-%% been pulled from nref_server during bootstrap.  The first runtime
-%% get_nref/0 must therefore return >= NrefStart.
-%%-----------------------------------------------------------------------------
-load_nref_floor_set(_Config) ->
-	ok = graphdb_bootstrap:load(),
-	NextNref = nref_server:get_nref(),
-	?assert(NextNref >= 1000000).
-
-%%-----------------------------------------------------------------------------
 %% Verify load/0 is idempotent: calling it again does not duplicate data.
 %%-----------------------------------------------------------------------------
 load_idempotent(_Config) ->
@@ -451,7 +435,7 @@ load_english_instance(_Config) ->
 	%% Find lang_code attribute nref by name (do not hardcode the assigned nref)
 	LangCodeNref = find_attribute_nref_by_name("lang_code"),
 	?assert(LangCodeNref > ?NREF_ENGLISH),
-	?assert(LangCodeNref < 1000000),
+	?assert(LangCodeNref < ?NREF_START),
 	?assert(lists:member(#{attribute => LangCodeNref, value => en},
 		Eng#node.attribute_value_pairs)).
 
@@ -463,10 +447,10 @@ load_labeled_nodes(_Config) ->
 	ok = graphdb_bootstrap:load(),
 	LangCodeNref = find_attribute_nref_by_name("lang_code"),
 	?assert(LangCodeNref > ?NREF_ENGLISH),
-	?assert(LangCodeNref < 1000000),
+	?assert(LangCodeNref < ?NREF_START),
 	LangHumanNref = find_class_nref_by_name("Human Language"),
 	?assert(LangHumanNref > ?NREF_ENGLISH),
-	?assert(LangHumanNref < 1000000).
+	?assert(LangHumanNref < ?NREF_START).
 
 %%-----------------------------------------------------------------------------
 %% Verify English's class membership arc and the classes cache.
@@ -520,37 +504,22 @@ load_nonexistent_file(Config) ->
 load_invalid_terms(Config) ->
 	TmpDir = proplists:get_value(tmp_dir, Config),
 	BadFile = filename:join(TmpDir, "bad.terms"),
-	ok = file:write_file(BadFile,
-		"{nref_start, 100}.\n{label_start, 50}.\n{bogus, stuff}.\n"),
+	ok = file:write_file(BadFile, "{bogus, stuff}.\n"),
 	application:set_env(seerstone_graph_db, bootstrap_file, BadFile),
 	Result = graphdb_bootstrap:load(),
 	?assertMatch({error, {unknown_term, {bogus, stuff}}}, Result).
 
 %%-----------------------------------------------------------------------------
-%% load/0 with a file missing the nref_start directive.
-%%-----------------------------------------------------------------------------
-load_missing_nref_start(Config) ->
-	TmpDir = proplists:get_value(tmp_dir, Config),
-	BadFile = filename:join(TmpDir, "no_floor.terms"),
-	ok = file:write_file(BadFile,
-		"{node, 1, category, {17, \"Root\"}, []}.\n"),
-	application:set_env(seerstone_graph_db, bootstrap_file, BadFile),
-	Result = graphdb_bootstrap:load(),
-	?assertMatch({error, missing_nref_start}, Result).
-
-%%-----------------------------------------------------------------------------
-%% load/0 with a node whose nref >= nref_start.
+%% load/0 with a node whose nref >= ?NREF_START.
 %%-----------------------------------------------------------------------------
 load_nref_above_floor(Config) ->
 	TmpDir = proplists:get_value(tmp_dir, Config),
 	BadFile = filename:join(TmpDir, "above_floor.terms"),
 	ok = file:write_file(BadFile,
-		"{nref_start, 10}.\n"
-		"{label_start, 5}.\n"
-		"{node, 10, category, {17, \"Root\"}, []}.\n"),
+		"{node, 1000000, category, {17, \"X\"}, []}.\n"),
 	application:set_env(seerstone_graph_db, bootstrap_file, BadFile),
 	Result = graphdb_bootstrap:load(),
-	?assertMatch({error, {nref_not_below_floor, 10, 10}}, Result).
+	?assertMatch({error, {nref_not_below_floor, ?NREF_START, ?NREF_START}}, Result).
 
 
 %%=============================================================================

@@ -5,8 +5,8 @@
 %% bootstrap.terms -- SeerStoneGraphDb initial graph scaffold
 %%
 %% Loaded once by graphdb_bootstrap:load/0 on first startup when the Mnesia
-%% nodes table is empty.  After a successful load, nref_server:set_floor/1 is
-%% called and the file is never consulted again.
+%% nodes table is empty.  The file is never consulted again after a successful
+%% load.  Tier boundaries are macros in graphdb_nrefs.hrl, not file directives.
 %%
 %% Nref tiers:
 %%   scaffold   (1–9 999):              pre-assigned category/attribute nodes
@@ -68,23 +68,28 @@
 %% -------------------------------------------------------------------------
 %% Tier boundaries.
 %%
-%% nref_start  -- boundary between the permanent and runtime tiers.  The
-%%                loader calls nref_server:set_floor(nref_start) once all
-%%                labels have been assigned, so every subsequent
-%%                get_nref/0 call (relationship row IDs, runtime API
-%%                node creation) returns >= nref_start.
-%%                Bumped from 100000 to 1000000 to leave generous head
-%%                room (~990k slots) for labeled permanent seeds.
+%% The permanent/runtime tier boundaries are compile-time constants defined
+%% in apps/graphdb/include/graphdb_nrefs.hrl:
 %%
-%% label_start -- starting value of the loader's local counter used to
-%%                assign nrefs to atom-labeled nodes (lang_code,
-%%                lang_human, ...).  Set to English's nref + 1 so labeled
-%%                nodes sit immediately above the pre-assigned permanent
-%%                seeds.  Must be > all explicit permanent nrefs and
-%%                < nref_start.
+%%   ?LABEL_START  (10001) -- starting value of the loader's local counter
+%%                            used to assign nrefs to atom-labeled nodes
+%%                            (lang_code, lang_human, ...).  Set to
+%%                            English's nref + 1 so labeled nodes sit
+%%                            immediately above the pre-assigned permanent
+%%                            seeds.
+%%
+%%   ?NREF_START (1000000) -- boundary between the permanent and runtime
+%%                            tiers.  Bumped from 100000 to 1000000 to
+%%                            leave generous head room (~990k slots) for
+%%                            labeled permanent seeds.
+%%
+%% The runtime floor (nref_server:set_floor/1) is raised to ?NREF_START
+%% by graphdb:start/2 (via graphdb_nref:set_runtime_phase/0) AFTER all
+%% child init/1 callbacks complete, not by the bootstrap loader.
+%%
+%% Loader labels land in [?LABEL_START, ?NREF_START); relationship row
+%% IDs are allocated by rel_id_server (a separate counter, starts at 1).
 %% -------------------------------------------------------------------------
-{nref_start, 1000000}.
-{label_start,   10001}.
 
 %% -------------------------------------------------------------------------
 %% Level 0 -- Root
