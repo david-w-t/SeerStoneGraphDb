@@ -686,6 +686,13 @@ surfaced alongside it (the default-template auto-creation by
 the user wishes to explore). Resolution of those questions may
 shape or directly answer P1.
 
+**Update (2026-05-31, L8):** The placement blocker is removed by
+construction. `create_relationship_attribute_pair/4` now files the
+`applies_to` / `applied_by` pair under any attribute parent, e.g.
+`?NREF_INST_REL_ATTRS` (16). The remaining choice of exact parent
+(nref 16 vs a Rule sub-bucket) stays a Phase-A seeding decision; the
+"would require an API extension" tension is gone.
+
 ### 10.2 Deferred — Later Phases or Follow-up Tasks
 
 Items surfaced during design that Phase A deliberately leaves for
