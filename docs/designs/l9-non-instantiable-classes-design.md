@@ -266,11 +266,15 @@ Proposed §7 addition (conceptual only):
 
 ## 6. Error Catalog
 
-| Error                                 | Raised by                          | When                                                 |
-| ------------------------------------- | ---------------------------------- | ---------------------------------------------------- |
-| `{class_not_instantiable, ClassNref}` | `graphdb_instance:create_instance` | Target class carries `instantiable => false`         |
-| `{not_a_class, Kind}`                 | `graphdb_class:is_instantiable`    | Nref resolves to a non-class node (existing pattern) |
-| `class_not_found`                     | `graphdb_class:is_instantiable`    | Nref does not resolve                                |
+| Error                                 | Raised by                                                            | When                                                 |
+| ------------------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------- |
+| `{class_not_instantiable, ClassNref}` | `graphdb_instance:create_instance` **and** `add_class_membership`   | Target class carries `instantiable => false`         |
+| `{not_a_class, Kind}`                 | `graphdb_class:is_instantiable`                                     | Nref resolves to a non-class node (existing pattern) |
+| `class_not_found`                     | `graphdb_class:is_instantiable`                                     | Nref does not resolve                                |
+
+Both instantiation paths guard the marker: direct `create_instance/3`
+and after-the-fact `add_class_membership/2` (which would otherwise be a
+backdoor making an existing instance a member of an abstract class).
 
 No new errors in `create_class/3`: arbitrary AVPs are not validated
 (§1), so the only failure modes remain the existing parent-validation
@@ -302,9 +306,12 @@ ones.
   `templates_for_class/1` returns `[]`.
 - `instantiable_class_keeps_default_template` — a class created without
   the marker still gets its default template (regression guard).
-- `is_instantiable_true_false` — returns `true` for an ordinary class
-  and a forced-disambiguation class (default deleted, no marker),
-  `false` for a marked class.
+- `is_instantiable_true_false` — returns `true` for an ordinary class,
+  `false` for a marked class. (The forced-disambiguation shape — default
+  template deleted, no marker — cannot be constructed at runtime yet:
+  `graphdb_class` has no `delete_template` API. Its regression guard is
+  deferred until that API lands; the guard logic reads only the marker
+  AVP, never template presence, so it is already correct for that shape.)
 
 ### 7.3 `graphdb_instance_SUITE`
 
@@ -312,9 +319,9 @@ ones.
   marked `instantiable => false` returns
   `{error, {class_not_instantiable, ClassNref}}`; no node or arcs are
   written (row-count delta = 0).
-- `create_instance_allowed_for_unmarked_class` — ordinary and
-  forced-disambiguation classes still instantiate normally (regression
-  guard).
+- `create_instance_allowed_for_unmarked_class` — ordinary unmarked
+  classes still instantiate normally (regression guard). The
+  forced-disambiguation variant is deferred — see §7.2.
 
 ### 7.4 Cache invariant
 
