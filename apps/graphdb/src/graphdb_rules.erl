@@ -95,7 +95,12 @@
 		create_composition_rule/6,
 		create_composition_rule/7,
 		create_connection_rule/7,
-		create_connection_rule/8
+		create_connection_rule/8,
+		get_rule/2,
+		rules_for_class/2,
+		composition_rules_for_class/2,
+		connection_rules_for_class/2,
+		list_rules/1
 		]).
 
 %%---------------------------------------------------------------------
@@ -194,6 +199,52 @@ create_connection_rule(Scope, Name, SourceClass, Char, TargetClass, Mode,
 	gen_server:call(?MODULE,
 		{create_connection_rule, Scope, Name, SourceClass, Char, TargetClass,
 		 Mode, Mult, TemplateNref}).
+
+%%-----------------------------------------------------------------------------
+%% get_rule(Scope, RuleNref) -> {ok, #node{}} | not_found
+%%
+%% Returns the full rule instance node iff RuleNref names a kind=instance
+%% node whose class membership includes CompositionRule or ConnectionRule.
+%% Scope environment reads the shared ontology; {project, _} -> not_found.
+%%-----------------------------------------------------------------------------
+get_rule(Scope, RuleNref) ->
+	gen_server:call(?MODULE, {get_rule, Scope, RuleNref}).
+
+%%-----------------------------------------------------------------------------
+%% rules_for_class(Scope, ClassNref) -> {ok, [#node{}]}
+%%
+%% All rules (both kinds) attached to ClassNref -- i.e. the targets of the
+%% applies_to connection arcs out of ClassNref.  {project, _} -> {ok, []}.
+%% DIRECT attachments only: rules attached to ClassNref's taxonomy
+%% ancestors are NOT included.  Ancestor-walking (effective_rules_for_class)
+%% is a Phase B addition.
+%%-----------------------------------------------------------------------------
+rules_for_class(Scope, ClassNref) ->
+	gen_server:call(?MODULE, {rules_for_class, Scope, ClassNref}).
+
+%%-----------------------------------------------------------------------------
+%% composition_rules_for_class(Scope, ClassNref) -> {ok, [#node{}]}
+%% connection_rules_for_class(Scope, ClassNref)  -> {ok, [#node{}]}
+%%
+%% Attached rules of ClassNref filtered to the CompositionRule (resp.
+%% ConnectionRule) meta-class.  {project, _} -> {ok, []}.
+%%-----------------------------------------------------------------------------
+composition_rules_for_class(Scope, ClassNref) ->
+	gen_server:call(?MODULE, {rules_for_class_kind, Scope, ClassNref,
+							  composition_rule}).
+
+connection_rules_for_class(Scope, ClassNref) ->
+	gen_server:call(?MODULE, {rules_for_class_kind, Scope, ClassNref,
+							  connection_rule}).
+
+%%-----------------------------------------------------------------------------
+%% list_rules(Scope) -> {ok, [#node{}]}
+%%
+%% Every rule instance in the ontology: the instances of both meta-classes.
+%% {project, _} -> {ok, []}.
+%%-----------------------------------------------------------------------------
+list_rules(Scope) ->
+	gen_server:call(?MODULE, {list_rules, Scope}).
 
 
 %%---------------------------------------------------------------------
@@ -297,6 +348,38 @@ handle_call({create_connection_rule, environment, Name, SourceClass, Char,
 handle_call({create_connection_rule, {project, _}, _, _, _, _, _, _, _},
 			_From, State) ->
 	{reply, {error, project_rules_not_yet_supported}, State};
+handle_call({get_rule, environment, RuleNref}, _From, State) ->
+	Reply = case mnesia:dirty_read(nodes, RuleNref) of
+		[#node{kind = instance} = N] ->
+			case is_rule_instance(N, State) of
+				true  -> {ok, N};
+				false -> not_found
+			end;
+		_ ->
+			not_found
+	end,
+	{reply, Reply, State};
+handle_call({get_rule, {project, _}, _}, _From, State) ->
+	{reply, not_found, State};
+handle_call({rules_for_class, environment, ClassNref}, _From, State) ->
+	{reply, {ok, attached_rules(ClassNref, State)}, State};
+handle_call({rules_for_class, {project, _}, _}, _From, State) ->
+	{reply, {ok, []}, State};
+handle_call({rules_for_class_kind, environment, ClassNref, MetaKey}, _From,
+			State) ->
+	MetaNref = meta_nref(MetaKey, State),
+	Filtered = [N || N <- attached_rules(ClassNref, State),
+				lists:member(MetaNref, N#node.classes)],
+	{reply, {ok, Filtered}, State};
+handle_call({rules_for_class_kind, {project, _}, _, _}, _From, State) ->
+	{reply, {ok, []}, State};
+handle_call({list_rules, environment}, _From, State) ->
+	Metas = [State#state.composition_rule_nref,
+			 State#state.connection_rule_nref],
+	All = lists:flatmap(fun(Meta) -> instances_of(Meta) end, Metas),
+	{reply, {ok, All}, State};
+handle_call({list_rules, {project, _}}, _From, State) ->
+	{reply, {ok, []}, State};
 handle_call(Request, From, State) ->
 	?UEM(handle_call, {Request, From, State}),
 	{noreply, State}.
@@ -589,3 +672,40 @@ do_create_rule(MetaClassNref, Name, OwningClass, ContentAVPs, Mode, Mult,
 optional_template_avp(undefined, _State) -> [];
 optional_template_avp(TemplateNref, State) ->
 	[#{attribute => State#state.template_nref_attr, value => TemplateNref}].
+
+
+%%---------------------------------------------------------------------
+%% Rule read path (retrieval -- dirty, read-only)
+%%---------------------------------------------------------------------
+
+%% attached_rules(ClassNref, State) -> [#node{}]
+%% Rules attached to ClassNref are the targets of the applies_to connection
+%% arcs out of ClassNref.
+attached_rules(ClassNref, State) ->
+	AppliesTo = State#state.applies_to_nref,
+	Arcs = mnesia:dirty_index_read(relationships, ClassNref,
+								   #relationship.source_nref),
+	RuleNrefs = [A#relationship.target_nref || A <- Arcs,
+				 A#relationship.kind =:= connection,
+				 A#relationship.characterization =:= AppliesTo],
+	lists:flatmap(fun(N) -> mnesia:dirty_read(nodes, N) end, RuleNrefs).
+
+%% instances_of(MetaNref) -> [#node{}]
+%% Instances of a meta-class are the class->instance (char 30) targets.
+instances_of(MetaNref) ->
+	Arcs = mnesia:dirty_index_read(relationships, MetaNref,
+								   #relationship.source_nref),
+	Nrefs = [A#relationship.target_nref || A <- Arcs,
+			 A#relationship.kind =:= instantiation,
+			 A#relationship.characterization =:= ?ARC_CLASS_TO_INST],
+	lists:flatmap(fun(N) -> mnesia:dirty_read(nodes, N) end, Nrefs).
+
+%% is_rule_instance(#node{}, State) -> boolean()
+%% True iff the node's class membership includes either meta-class.
+is_rule_instance(#node{classes = Classes}, State) ->
+	lists:member(State#state.composition_rule_nref, Classes)
+		orelse lists:member(State#state.connection_rule_nref, Classes).
+
+%% meta_nref(MetaKey, State) -> integer()
+meta_nref(composition_rule, State) -> State#state.composition_rule_nref;
+meta_nref(connection_rule,  State) -> State#state.connection_rule_nref.

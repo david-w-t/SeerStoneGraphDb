@@ -88,7 +88,14 @@
 	not_a_template_rejected/1,
 	invalid_mode_rejected/1,
 	invalid_multiplicity_rejected/1,
-	failed_validation_consumes_no_nref/1
+	failed_validation_consumes_no_nref/1,
+	%% retrieval
+	rules_for_class_returns_all_kinds/1,
+	composition_rules_for_class_filters_by_kind/1,
+	connection_rules_for_class_filters_by_kind/1,
+	get_rule_returns_full_record/1,
+	get_rule_not_found/1,
+	list_rules_returns_all/1
 ]).
 
 
@@ -101,7 +108,7 @@ suite() ->
 
 all() ->
 	[{group, seeding}, {group, composition}, {group, connection},
-	 {group, validation}].
+	 {group, validation}, {group, retrieval}].
 
 groups() ->
 	[
@@ -137,6 +144,14 @@ groups() ->
 			invalid_mode_rejected,
 			invalid_multiplicity_rejected,
 			failed_validation_consumes_no_nref
+		]},
+		{retrieval, [], [
+			rules_for_class_returns_all_kinds,
+			composition_rules_for_class_filters_by_kind,
+			connection_rules_for_class_filters_by_kind,
+			get_rule_returns_full_record,
+			get_rule_not_found,
+			list_rules_returns_all
 		]}
 	].
 
@@ -545,6 +560,79 @@ failed_validation_consumes_no_nref(_Config) ->
 		graphdb_rules:create_composition_rule(
 			environment, "x", Parent, Child, mandatory, 1, 999999)),
 	?assertEqual(Before, table_size(nodes)).
+
+
+%%=============================================================================
+%% Retrieval Tests
+%%=============================================================================
+
+rules_for_class_returns_all_kinds(_Config) ->
+	Car   = make_class("Car"),
+	Eng   = make_class("Engine"),
+	Maker = make_class("Manufacturer"),
+	Char  = make_rel_char("made_by", "makes"),
+	{ok, R1} = graphdb_rules:create_composition_rule(
+		environment, "has-engine", Car, Eng, mandatory, 1),
+	{ok, R2} = graphdb_rules:create_connection_rule(
+		environment, "made-by", Car, Char, Maker, mandatory, 1),
+	{ok, Rules} = graphdb_rules:rules_for_class(environment, Car),
+	Nrefs = [N#node.nref || N <- Rules],
+	?assertEqual(lists:sort([R1, R2]), lists:sort(Nrefs)).
+
+composition_rules_for_class_filters_by_kind(_Config) ->
+	Car   = make_class("Car"),
+	Eng   = make_class("Engine"),
+	Maker = make_class("Manufacturer"),
+	Char  = make_rel_char("made_by", "makes"),
+	{ok, R1} = graphdb_rules:create_composition_rule(
+		environment, "has-engine", Car, Eng, mandatory, 1),
+	{ok, _R2} = graphdb_rules:create_connection_rule(
+		environment, "made-by", Car, Char, Maker, mandatory, 1),
+	{ok, Comp} = graphdb_rules:composition_rules_for_class(environment, Car),
+	?assertEqual([R1], [N#node.nref || N <- Comp]).
+
+connection_rules_for_class_filters_by_kind(_Config) ->
+	Car   = make_class("Car"),
+	Eng   = make_class("Engine"),
+	Maker = make_class("Manufacturer"),
+	Char  = make_rel_char("made_by", "makes"),
+	{ok, _R1} = graphdb_rules:create_composition_rule(
+		environment, "has-engine", Car, Eng, mandatory, 1),
+	{ok, R2} = graphdb_rules:create_connection_rule(
+		environment, "made-by", Car, Char, Maker, mandatory, 1),
+	{ok, Conn} = graphdb_rules:connection_rules_for_class(environment, Car),
+	?assertEqual([R2], [N#node.nref || N <- Conn]).
+
+get_rule_returns_full_record(_Config) ->
+	Car = make_class("Car"),
+	Eng = make_class("Engine"),
+	{ok, R} = graphdb_rules:create_composition_rule(
+		environment, "has-engine", Car, Eng, mandatory, 1),
+	{ok, #node{nref = R, kind = instance}} =
+		graphdb_rules:get_rule(environment, R).
+
+get_rule_not_found(_Config) ->
+	%% Missing nref.
+	?assertEqual(not_found, graphdb_rules:get_rule(environment, 999999)),
+	%% Existing node that is NOT a rule instance (a plain class) must also
+	%% be rejected -- exercises the kind/is_rule_instance discrimination,
+	%% not just the missing-nref fall-through.
+	Car = make_class("Car"),
+	?assertEqual(not_found, graphdb_rules:get_rule(environment, Car)).
+
+list_rules_returns_all(_Config) ->
+	Car  = make_class("Car"),
+	Eng  = make_class("Engine"),
+	Bike = make_class("Bike"),
+	Whl  = make_class("Wheel"),
+	{ok, R1} = graphdb_rules:create_composition_rule(
+		environment, "car-engine", Car, Eng, mandatory, 1),
+	{ok, R2} = graphdb_rules:create_composition_rule(
+		environment, "bike-wheel", Bike, Whl, mandatory, 2),
+	{ok, All} = graphdb_rules:list_rules(environment),
+	Nrefs = [N#node.nref || N <- All],
+	?assert(lists:member(R1, Nrefs)),
+	?assert(lists:member(R2, Nrefs)).
 
 
 %%=============================================================================
