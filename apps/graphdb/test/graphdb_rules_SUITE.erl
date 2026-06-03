@@ -95,7 +95,10 @@
 	connection_rules_for_class_filters_by_kind/1,
 	get_rule_returns_full_record/1,
 	get_rule_not_found/1,
-	list_rules_returns_all/1
+	list_rules_returns_all/1,
+	%% scope
+	project_scope_rejected_on_create/1,
+	project_scope_returns_empty_on_retrieve/1
 ]).
 
 
@@ -108,7 +111,7 @@ suite() ->
 
 all() ->
 	[{group, seeding}, {group, composition}, {group, connection},
-	 {group, validation}, {group, retrieval}].
+	 {group, validation}, {group, retrieval}, {group, scope}].
 
 groups() ->
 	[
@@ -152,6 +155,10 @@ groups() ->
 			get_rule_returns_full_record,
 			get_rule_not_found,
 			list_rules_returns_all
+		]},
+		{scope, [], [
+			project_scope_rejected_on_create,
+			project_scope_returns_empty_on_retrieve
 		]}
 	].
 
@@ -633,6 +640,36 @@ list_rules_returns_all(_Config) ->
 	Nrefs = [N#node.nref || N <- All],
 	?assert(lists:member(R1, Nrefs)),
 	?assert(lists:member(R2, Nrefs)).
+
+
+%%=============================================================================
+%% Scope Tests
+%%=============================================================================
+%% Phase A supports environment-scoped rules only.  The {project, _} branches
+%% (added across Tasks 2-5) lock the contract: create is rejected, every
+%% retrieval returns empty / not_found.
+
+project_scope_rejected_on_create(_Config) ->
+	Parent = make_class("Car"),
+	Child  = make_class("Engine"),
+	?assertEqual({error, project_rules_not_yet_supported},
+		graphdb_rules:create_composition_rule(
+			{project, 1}, "x", Parent, Child, mandatory, 1)),
+	Source = make_class("Order"),
+	Target = make_class("Customer"),
+	Char   = make_rel_char("placed_by", "placed"),
+	?assertEqual({error, project_rules_not_yet_supported},
+		graphdb_rules:create_connection_rule(
+			{project, 1}, "x", Source, Char, Target, mandatory, 1)).
+
+project_scope_returns_empty_on_retrieve(_Config) ->
+	Car = make_class("Car"),
+	?assertEqual({ok, []},
+		graphdb_rules:rules_for_class({project, 1}, Car)),
+	?assertEqual({ok, []},
+		graphdb_rules:composition_rules_for_class({project, 1}, Car)),
+	?assertEqual({ok, []}, graphdb_rules:list_rules({project, 1})),
+	?assertEqual(not_found, graphdb_rules:get_rule({project, 1}, 999999)).
 
 
 %%=============================================================================
