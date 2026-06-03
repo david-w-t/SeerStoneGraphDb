@@ -608,9 +608,36 @@ scope; serial execution (F3 then F4) is a reasonable alternative.**
 **Spec:** §8 (rules as stored data), §9 (instantiation engine), §10
 (composition rules), §11 (reactive learning).
 
-**Evidence:** `apps/graphdb/src/graphdb_rules.erl` is a gen_server stub.
+The design splits E1 into six phases (A–F). See
+`docs/designs/f4-graphdb-rules-design.md`.
 
-**Scope:**
+### F4 Phase A — Rule data model — **RESOLVED** (2026-06-02)
+
+`graphdb_rules` replaced its stub with the Phase A data model: a
+runtime-seeded rule meta-ontology (`Rule` abstract class +
+`CompositionRule` / `ConnectionRule` under nref 3; `Rule Literals`
+sub-group + 6 literal attrs under nref 7; `applies_to` / `applied_by`
+relationship-attribute pair under nref 16), and a scope-aware
+create/retrieve API: `create_composition_rule/6,7`,
+`create_connection_rule/7,8`, `get_rule/2`, `rules_for_class/2`,
+`composition_rules_for_class/2`, `connection_rules_for_class/2`,
+`list_rules/1`, `seeded_nrefs/0`. Content AVPs live on the rule
+instance node; deployment AVPs (`mode`, `multiplicity`, `Template`) on
+the `applies_to` connection arc. Retrieval is direct-attachment only.
+`graphdb_rules` moved to the last child of `graphdb_sup`. 37 CT cases
+added (`graphdb_rules_SUITE`).
+
+### F4 Phases B–F — Rule-firing engine — OUTSTANDING
+
+The remaining phases build the engine that consumes the Phase A data
+model. Taxonomy-walking `effective_rules_for_class/2`, the
+instantiation engine, composition-rule firing at `create_instance`,
+and reactive learning are all Phase B+ work.
+
+**Evidence:** `apps/graphdb/src/graphdb_rules.erl` Phase A is
+implemented; no firing engine exists yet.
+
+**Scope (Phases B–F):**
 
 - **§10 Composition rules** — class declares natural-constituent
   component types and mandatory connections. Engine fires at
@@ -802,6 +829,29 @@ New `rel_id_server` gen_server added to `apps/graphdb/src/` as first child of
 `graphdb_sup`. All 23 `#relationship.id` allocations across 5 files migrated from
 `nref_server:get_nref/0` to `rel_id_server:get_id/0`. Bootstrap test assertions
 updated (nref floor now `>= 100002`; relationship IDs now start at 1). 4 CT tests added.
+
+---
+
+### L6. Multi-Project Sessions — **DEFERRED**
+
+Added to Engineering Hygiene by the F4 design
+(`docs/designs/f4-graphdb-rules-design.md` §9). The `Scope` argument on
+every M6, F3, and F4 public API is the forward-compatibility hook: APIs
+already accept `{project, _}`, but the gen_server handlers serve the
+`environment` scope only and reject or empty `{project, _}` requests.
+
+L6 is the home for:
+
+1. Session state carrying `[{ProjectId, AnchorNref}]` (a list, not a
+   singleton).
+2. Cross-project arc traversal — arcs whose target is a project nref
+   carry `target_kind` but not *which* project.
+3. Session-level priority resolution (env, then project A's rules, then
+   project B's rules — or a declared order).
+4. Project-scoped overlay tables for rule instances when project rules
+   are turned on.
+
+**Not blocked by, and does not block, F4 Phase A.**
 
 ---
 
