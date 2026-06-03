@@ -14,9 +14,6 @@
 %% Rev PA1 Date: *** 2008 Author: Dallas Noyes (dallas.noyes@gmail.com)
 %% Stub implementation.
 %%---------------------------------------------------------------------
-%% Rev A Date: *** 2008 Author: Dallas Noyes (dallas.noyes@gmail.com)
-%%
-%%---------------------------------------------------------------------
 %% Rev A Date: June 2026 Author: David W. Thomas (david@davidwt.com)
 %% F4 Phase A: rule meta-ontology seeding (Rule / CompositionRule /
 %% ConnectionRule), Rule Literals sub-group, applies_to/applied_by
