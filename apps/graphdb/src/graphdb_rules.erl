@@ -91,7 +91,9 @@
 %%---------------------------------------------------------------------
 -export([
 		start_link/0,
-		seeded_nrefs/0
+		seeded_nrefs/0,
+		create_composition_rule/6,
+		create_composition_rule/7
 		]).
 
 %%---------------------------------------------------------------------
@@ -141,6 +143,29 @@ start_link() ->
 %%-----------------------------------------------------------------------------
 seeded_nrefs() ->
 	gen_server:call(?MODULE, seeded_nrefs).
+
+%%-----------------------------------------------------------------------------
+%% create_composition_rule(Scope, Name, ParentClass, ChildClass, Mode, Mult)
+%% create_composition_rule(Scope, Name, ParentClass, ChildClass, Mode, Mult,
+%%                         TemplateNref)
+%%     -> {ok, RuleNref} | {error, term()}
+%%
+%% Creates a composition rule: a kind=instance node whose class membership
+%% is the seeded CompositionRule meta-class.  Rule content (child_class_nref,
+%% optional template_nref) lives on the node; rule deployment (Template,
+%% mode, multiplicity) lives on the applies_to connection arc from the
+%% owning (parent) class to the rule instance.  Scope environment writes to
+%% the shared ontology; {project, _} is not yet supported.
+%%-----------------------------------------------------------------------------
+create_composition_rule(Scope, Name, ParentClass, ChildClass, Mode, Mult) ->
+	create_composition_rule(Scope, Name, ParentClass, ChildClass, Mode, Mult,
+							undefined).
+
+create_composition_rule(Scope, Name, ParentClass, ChildClass, Mode, Mult,
+						TemplateNref) ->
+	gen_server:call(?MODULE,
+		{create_composition_rule, Scope, Name, ParentClass, ChildClass,
+		 Mode, Mult, TemplateNref}).
 
 
 %%---------------------------------------------------------------------
@@ -208,6 +233,17 @@ handle_call(seeded_nrefs, _From, State) ->
 		mode_attr                  => State#state.mode_attr,
 		multiplicity_attr          => State#state.multiplicity_attr
 	}}, State};
+handle_call({create_composition_rule, environment, Name, ParentClass,
+			 ChildClass, Mode, Mult, TemplateNref}, _From, State) ->
+	ContentAVPs = [#{attribute => State#state.child_class_nref_attr,
+					 value => ChildClass}
+				   | optional_template_avp(TemplateNref, State)],
+	Reply = do_create_rule(State#state.composition_rule_nref, Name,
+				ParentClass, ContentAVPs, Mode, Mult, State),
+	{reply, Reply, State};
+handle_call({create_composition_rule, {project, _}, _, _, _, _, _, _},
+			_From, State) ->
+	{reply, {error, project_rules_not_yet_supported}, State};
 handle_call(Request, From, State) ->
 	?UEM(handle_call, {Request, From, State}),
 	{noreply, State}.
@@ -321,3 +357,65 @@ class_has_name(#node{attribute_value_pairs = AVPs}, Name) ->
 instantiable_marker_nref() ->
 	{ok, #{instantiable := InstAttr}} = graphdb_attr:seeded_nrefs(),
 	InstAttr.
+
+
+%%---------------------------------------------------------------------
+%% Rule write path (shared by composition and connection rules)
+%%---------------------------------------------------------------------
+
+%% do_create_rule(MetaClassNref, Name, OwningClass, ContentAVPs, Mode, Mult,
+%%                State) -> {ok, RuleNref} | {error, term()}
+%%
+%% Allocates all nrefs/ids OUTSIDE the transaction, then writes -- in one
+%% transaction -- the rule instance node, the instance<->class membership
+%% arc pair (chars 29/30), and the applies_to/applied_by connection arc
+%% pair.  Rule content lives on the node; rule deployment (Template, mode,
+%% multiplicity) lives on the forward applies_to arc only.
+%% (Validation is added in a later F4 Phase A task; for now it writes
+%% directly.)
+do_create_rule(MetaClassNref, Name, OwningClass, ContentAVPs, Mode, Mult,
+			   State) ->
+	{ok, DefaultTemplate} = graphdb_class:default_template(OwningClass),
+	RuleNref = graphdb_nref:get_next(),
+	{MembId1, MembId2} = rel_id_server:get_id_pair(),
+	{ConnId1, ConnId2} = rel_id_server:get_id_pair(),
+	NameAVP = #{attribute => ?NAME_ATTR_INSTANCE, value => Name},
+	Node = #node{nref = RuleNref, kind = instance, parents = [],
+				 classes = [MetaClassNref],
+				 attribute_value_pairs = [NameAVP | ContentAVPs]},
+	I2C = #relationship{id = MembId1, kind = instantiation,
+		source_nref = RuleNref, characterization = ?ARC_INST_TO_CLASS,
+		target_nref = MetaClassNref, reciprocal = ?ARC_CLASS_TO_INST,
+		avps = []},
+	C2I = #relationship{id = MembId2, kind = instantiation,
+		source_nref = MetaClassNref, characterization = ?ARC_CLASS_TO_INST,
+		target_nref = RuleNref, reciprocal = ?ARC_INST_TO_CLASS, avps = []},
+	DeployAVPs = [#{attribute => ?ARC_TEMPLATE, value => DefaultTemplate},
+				  #{attribute => State#state.mode_attr, value => Mode},
+				  #{attribute => State#state.multiplicity_attr, value => Mult}],
+	AppliesTo = #relationship{id = ConnId1, kind = connection,
+		source_nref = OwningClass,
+		characterization = State#state.applies_to_nref,
+		target_nref = RuleNref, reciprocal = State#state.applied_by_nref,
+		avps = DeployAVPs},
+	AppliedBy = #relationship{id = ConnId2, kind = connection,
+		source_nref = RuleNref, characterization = State#state.applied_by_nref,
+		target_nref = OwningClass, reciprocal = State#state.applies_to_nref,
+		avps = []},
+	Txn = fun() ->
+		ok = mnesia:write(nodes, Node, write),
+		ok = mnesia:write(relationships, I2C, write),
+		ok = mnesia:write(relationships, C2I, write),
+		ok = mnesia:write(relationships, AppliesTo, write),
+		ok = mnesia:write(relationships, AppliedBy, write)
+	end,
+	case mnesia:transaction(Txn) of
+		{atomic, ok}      -> {ok, RuleNref};
+		{aborted, Reason} -> {error, Reason}
+	end.
+
+%% optional_template_avp(TemplateNref, State) -> [AVP] | []
+%% The optional template_nref content AVP on the rule node.
+optional_template_avp(undefined, _State) -> [];
+optional_template_avp(TemplateNref, State) ->
+	[#{attribute => State#state.template_nref_attr, value => TemplateNref}].

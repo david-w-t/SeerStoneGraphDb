@@ -21,11 +21,9 @@
 %%---------------------------------------------------------------------
 %% Record definitions (match graphdb internal records -- no shared
 %% header; copied verbatim from graphdb_instance_SUITE.erl).  The
-%% #relationship{} record is exercised by the create/retrieve groups
-%% added in later F4 Phase A tasks; suppress the not-yet-used warning.
+%% #relationship{} record is exercised by the composition group
+%% (read_arc/3) and later F4 Phase A tasks.
 %%---------------------------------------------------------------------
--compile({nowarn_unused_record, [relationship]}).
-
 -record(node, {
 	nref,
 	kind,
@@ -67,7 +65,13 @@
 	seeds_rule_literals_subgroup/1,
 	seeds_literal_attributes_under_rule_literals/1,
 	seeds_applies_to_pair/1,
-	seeded_nrefs_returns_all_twelve/1
+	seeded_nrefs_returns_all_twelve/1,
+	%% composition
+	creates_composition_rule_minimal/1,
+	creates_composition_rule_with_template/1,
+	applies_to_arc_pair_written/1,
+	instance_to_class_membership_written/1,
+	avps_present_and_correct/1
 ]).
 
 
@@ -79,7 +83,7 @@ suite() ->
 	[{timetrap, {seconds, 30}}].
 
 all() ->
-	[{group, seeding}].
+	[{group, seeding}, {group, composition}].
 
 groups() ->
 	[
@@ -89,6 +93,13 @@ groups() ->
 			seeds_literal_attributes_under_rule_literals,
 			seeds_applies_to_pair,
 			seeded_nrefs_returns_all_twelve
+		]},
+		{composition, [], [
+			creates_composition_rule_minimal,
+			creates_composition_rule_with_template,
+			applies_to_arc_pair_written,
+			instance_to_class_membership_written,
+			avps_present_and_correct
 		]}
 	].
 
@@ -256,8 +267,104 @@ seeded_nrefs_returns_all_twelve(_Config) ->
 
 
 %%=============================================================================
+%% Composition Tests
+%%=============================================================================
+
+creates_composition_rule_minimal(_Config) ->
+	Parent = make_class("Car"),
+	Child  = make_class("Engine"),
+	{ok, RuleNref} = graphdb_rules:create_composition_rule(
+		environment, "car-has-engine", Parent, Child, mandatory, 1),
+	?assert(is_integer(RuleNref)),
+	{ok, #node{kind = instance, classes = Classes}} = node_read2(RuleNref),
+	{ok, S} = graphdb_rules:seeded_nrefs(),
+	?assertEqual([maps:get(composition_rule, S)], Classes).
+
+creates_composition_rule_with_template(_Config) ->
+	Parent = make_class("Car"),
+	Child  = make_class("Wheel"),
+	{ok, DT} = graphdb_class:default_template(Parent),
+	{ok, RuleNref} = graphdb_rules:create_composition_rule(
+		environment, "car-has-wheel", Parent, Child, auto, 4, DT),
+	{ok, S} = graphdb_rules:seeded_nrefs(),
+	TemplateAttr = maps:get(template_nref_attr, S),
+	{ok, #node{attribute_value_pairs = AVPs}} = node_read2(RuleNref),
+	?assert(lists:member(#{attribute => TemplateAttr, value => DT}, AVPs)).
+
+applies_to_arc_pair_written(_Config) ->
+	Parent = make_class("Car"),
+	Child  = make_class("Engine"),
+	{ok, RuleNref} = graphdb_rules:create_composition_rule(
+		environment, "car-has-engine", Parent, Child, mandatory, 1),
+	{ok, S} = graphdb_rules:seeded_nrefs(),
+	AppliesTo = maps:get(applies_to, S),
+	AppliedBy = maps:get(applied_by, S),
+	ModeAttr  = maps:get(mode_attr, S),
+	MultAttr  = maps:get(multiplicity_attr, S),
+	{ok, DT}  = graphdb_class:default_template(Parent),
+	Fwd = read_arc(Parent, AppliesTo, RuleNref),
+	Rev = read_arc(RuleNref, AppliedBy, Parent),
+	?assertEqual(connection, Fwd#relationship.kind),
+	?assertEqual(connection, Rev#relationship.kind),
+	FAVPs = Fwd#relationship.avps,
+	?assert(lists:member(#{attribute => ?ARC_TEMPLATE, value => DT}, FAVPs)),
+	?assert(lists:member(#{attribute => ModeAttr, value => mandatory}, FAVPs)),
+	?assert(lists:member(#{attribute => MultAttr, value => 1}, FAVPs)).
+
+instance_to_class_membership_written(_Config) ->
+	Parent = make_class("Car"),
+	Child  = make_class("Engine"),
+	{ok, RuleNref} = graphdb_rules:create_composition_rule(
+		environment, "car-has-engine", Parent, Child, mandatory, 1),
+	{ok, S} = graphdb_rules:seeded_nrefs(),
+	Comp = maps:get(composition_rule, S),
+	I2C = read_arc(RuleNref, ?ARC_INST_TO_CLASS, Comp),
+	C2I = read_arc(Comp, ?ARC_CLASS_TO_INST, RuleNref),
+	?assertEqual(instantiation, I2C#relationship.kind),
+	?assertEqual(instantiation, C2I#relationship.kind).
+
+avps_present_and_correct(_Config) ->
+	Parent = make_class("Car"),
+	Child  = make_class("Engine"),
+	{ok, RuleNref} = graphdb_rules:create_composition_rule(
+		environment, "car-has-engine", Parent, Child, mandatory, 1),
+	{ok, S} = graphdb_rules:seeded_nrefs(),
+	ChildAttr = maps:get(child_class_nref_attr, S),
+	{ok, #node{attribute_value_pairs = AVPs}} = node_read2(RuleNref),
+	?assert(lists:member(#{attribute => ?NAME_ATTR_INSTANCE,
+						   value => "car-has-engine"}, AVPs)),
+	?assert(lists:member(#{attribute => ChildAttr, value => Child}, AVPs)),
+	%% no deployment AVPs leaked onto the node
+	ModeAttr = maps:get(mode_attr, S),
+	?assertNot(lists:any(fun(#{attribute := A}) -> A =:= ModeAttr end, AVPs)).
+
+
+%%=============================================================================
 %% Local test helpers
 %%=============================================================================
+
+%% make_class(Name) -> Nref
+%% Creates a (non-abstract) domain class under ?NREF_CLASSES.
+make_class(Name) ->
+	{ok, Nref} = graphdb_class:create_class(Name, ?NREF_CLASSES),
+	Nref.
+
+%% node_read2(Nref) -> {ok, #node{}} | not_found
+node_read2(Nref) ->
+	case mnesia:dirty_read(nodes, Nref) of
+		[N] -> {ok, N};
+		[]  -> not_found
+	end.
+
+%% read_arc(Source, Char, Target) -> #relationship{}
+%% Returns the single arc from Source to Target with characterization Char.
+read_arc(Source, Char, Target) ->
+	Arcs = mnesia:dirty_index_read(relationships, Source,
+								   #relationship.source_nref),
+	[Arc] = [A || A <- Arcs,
+			 A#relationship.characterization =:= Char,
+			 A#relationship.target_nref =:= Target],
+	Arc.
 
 %% node_read(Nref) -> {ok, #node{}} | not_found
 node_read(Nref) ->
