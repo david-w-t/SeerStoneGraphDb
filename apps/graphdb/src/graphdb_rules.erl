@@ -675,16 +675,23 @@ optional_template_avp(TemplateNref, State) ->
 %% Rule read path (retrieval -- dirty, read-only)
 %%---------------------------------------------------------------------
 
-%% attached_rules(ClassNref, State) -> [#node{}]
-%% Rules attached to ClassNref are the targets of the applies_to connection
-%% arcs out of ClassNref.
-attached_rules(ClassNref, State) ->
+%% applies_to_arcs(ClassNref, State) -> [#relationship{}]
+%% The forward applies_to connection arcs out of ClassNref -- one per rule
+%% attached directly to the class.  Shared by attached_rules/2 (bare nodes)
+%% and attached_rules_with_deployment/2 (nodes + deployment map).
+applies_to_arcs(ClassNref, State) ->
 	AppliesTo = State#state.applies_to_nref,
 	Arcs = mnesia:dirty_index_read(relationships, ClassNref,
 								   #relationship.source_nref),
-	RuleNrefs = [A#relationship.target_nref || A <- Arcs,
-				 A#relationship.kind =:= connection,
-				 A#relationship.characterization =:= AppliesTo],
+	[A || A <- Arcs,
+	 A#relationship.kind =:= connection,
+	 A#relationship.characterization =:= AppliesTo].
+
+%% attached_rules(ClassNref, State) -> [#node{}]
+%% Rules attached directly to ClassNref: the targets of its applies_to arcs.
+attached_rules(ClassNref, State) ->
+	RuleNrefs = [A#relationship.target_nref
+				 || A <- applies_to_arcs(ClassNref, State)],
 	lists:flatmap(fun(N) -> mnesia:dirty_read(nodes, N) end, RuleNrefs).
 
 %% instances_of(MetaNref) -> [#node{}]
