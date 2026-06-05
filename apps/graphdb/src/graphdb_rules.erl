@@ -97,6 +97,7 @@
 		rules_for_class/2,
 		composition_rules_for_class/2,
 		connection_rules_for_class/2,
+		effective_rules_for_class/2,
 		list_rules/1
 		]).
 
@@ -235,6 +236,24 @@ connection_rules_for_class(Scope, ClassNref) ->
 							  connection_rule}).
 
 %%-----------------------------------------------------------------------------
+%% effective_rules_for_class(Scope, ClassNref) ->
+%%     {ok, [{AncestorNref :: integer(),
+%%            [{RuleNode :: #node{}, Deployment :: map()}]}]}
+%%
+%% Every rule attached to ClassNref AND to each of its taxonomy ancestors,
+%% grouped by the class it is attached to, nearest-first (ClassNref itself
+%% first), each rule paired with that attachment's deployment map
+%% (#{mode, multiplicity, template}).  Both rule kinds are returned; callers
+%% filter inline.  Levels contributing no rules are omitted.
+%% {project, _} -> {ok, []}.
+%%
+%% Does NOT resolve override/shadow/conflict -- every level's rules are
+%% present.  Resolution is the firing engine's job (Phase B2/B5).
+%%-----------------------------------------------------------------------------
+effective_rules_for_class(Scope, ClassNref) ->
+	gen_server:call(?MODULE, {effective_rules_for_class, Scope, ClassNref}).
+
+%%-----------------------------------------------------------------------------
 %% list_rules(Scope) -> {ok, [#node{}]}
 %%
 %% Every rule instance in the ontology: the instances of both meta-classes.
@@ -361,6 +380,10 @@ handle_call({get_rule, {project, _}, _}, _From, State) ->
 handle_call({rules_for_class, environment, ClassNref}, _From, State) ->
 	{reply, {ok, attached_rules(ClassNref, State)}, State};
 handle_call({rules_for_class, {project, _}, _}, _From, State) ->
+	{reply, {ok, []}, State};
+handle_call({effective_rules_for_class, environment, ClassNref}, _From, State) ->
+	{reply, {ok, effective_rules(ClassNref, State)}, State};
+handle_call({effective_rules_for_class, {project, _}, _}, _From, State) ->
 	{reply, {ok, []}, State};
 handle_call({rules_for_class_kind, environment, ClassNref, MetaKey}, _From,
 			State) ->
@@ -693,6 +716,56 @@ attached_rules(ClassNref, State) ->
 	RuleNrefs = [A#relationship.target_nref
 				 || A <- applies_to_arcs(ClassNref, State)],
 	lists:flatmap(fun(N) -> mnesia:dirty_read(nodes, N) end, RuleNrefs).
+
+%% effective_rules(ClassNref, State) -> [{LevelNref, [{#node{}, map()}]}]
+%% Self-first, nearest-first taxonomy gather: the class itself followed by its
+%% ancestors (graphdb_class:ancestors/1 order).  Each level carries the rules
+%% attached directly to it, paired with that attachment's deployment.  Levels
+%% with no attached rules are dropped (B1-D7).  Resolves nothing (B1-D1).
+effective_rules(ClassNref, State) ->
+	Chain = [ClassNref | ancestor_nrefs(ClassNref)],
+	[{Level, Pairs}
+	 || Level <- Chain,
+		Pairs <- [attached_rules_with_deployment(Level, State)],
+		Pairs =/= []].
+
+%% ancestor_nrefs(ClassNref) -> [integer()]
+%% The taxonomy ancestors of ClassNref, nearest-first, via the canonical
+%% graphdb_class:ancestors/1 walk.  A bad starting class (unknown nref or a
+%% non-class node) makes ancestors/1 return {error, _}; B1 maps that to an
+%% empty ancestor set (B1-D6).  The direct-attachment read on a bad nref is
+%% likewise empty, so the overall effective result is {ok, []}.
+ancestor_nrefs(ClassNref) ->
+	case graphdb_class:ancestors(ClassNref) of
+		{ok, Nodes} -> [N#node.nref || N <- Nodes];
+		{error, _}  -> []
+	end.
+
+%% attached_rules_with_deployment(ClassNref, State) -> [{#node{}, map()}]
+%% Deployment-preserving sibling of attached_rules/2: each rule attached
+%% directly to ClassNref paired with the deployment map decoded from its
+%% applies_to arc.
+attached_rules_with_deployment(ClassNref, State) ->
+	[ {RuleNode, decode_deployment(Arc#relationship.avps, State)}
+	  || Arc <- applies_to_arcs(ClassNref, State),
+		 RuleNode <- mnesia:dirty_read(nodes, Arc#relationship.target_nref) ].
+
+%% decode_deployment(AVPs, State) -> map()
+%% Decodes an applies_to arc's deployment AVPs into the symbolic Deployment map
+%% #{mode, multiplicity, template}.  A key whose AVP is absent is omitted
+%% (B1-D2).  The `template' key reads the arc Template scope marker
+%% (?ARC_TEMPLATE, attr 31) -- NOT the template_nref content literal on the
+%% rule node.
+decode_deployment(AVPs, State) ->
+	Pairs = [{mode,         State#state.mode_attr},
+			 {multiplicity, State#state.multiplicity_attr},
+			 {template,     ?ARC_TEMPLATE}],
+	lists:foldl(fun({Key, AttrNref}, Acc) ->
+		case lists:search(fun(#{attribute := A}) -> A =:= AttrNref end, AVPs) of
+			{value, #{value := V}} -> Acc#{Key => V};
+			false                  -> Acc
+		end
+	end, #{}, Pairs).
 
 %% instances_of(MetaNref) -> [#node{}]
 %% Instances of a meta-class are the class->instance (char 30) targets.

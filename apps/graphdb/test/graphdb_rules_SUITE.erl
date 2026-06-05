@@ -103,6 +103,18 @@
 	mixed_rules_on_one_class/1,
 	rule_isolation_across_class_taxonomy/1,
 	duplicate_child_class_with_different_modes/1,
+	%% effective (B1 taxonomy walk)
+	self_only_no_ancestors/1,
+	linear_chain_nearest_first/1,
+	diamond_dag_dedup/1,
+	shared_rule_node_across_ancestors/1,
+	deployment_avps_surfaced/1,
+	additive_parent_and_child/1,
+	empty_levels_skipped/1,
+	mixed_kinds_returned/1,
+	project_scope_empty/1,
+	unknown_class_empty/1,
+	non_class_nref_empty/1,
 	%% cache audit
 	verify_caches_passes_after_rule_creation/1
 ]).
@@ -118,7 +130,7 @@ suite() ->
 all() ->
 	[{group, seeding}, {group, composition}, {group, connection},
 	 {group, validation}, {group, retrieval}, {group, scope},
-	 {group, complex_scenarios}, {group, cache_audit}].
+	 {group, complex_scenarios}, {group, effective}, {group, cache_audit}].
 
 groups() ->
 	[
@@ -171,6 +183,19 @@ groups() ->
 			mixed_rules_on_one_class,
 			rule_isolation_across_class_taxonomy,
 			duplicate_child_class_with_different_modes
+		]},
+		{effective, [], [
+			self_only_no_ancestors,
+			linear_chain_nearest_first,
+			diamond_dag_dedup,
+			shared_rule_node_across_ancestors,
+			deployment_avps_surfaced,
+			additive_parent_and_child,
+			empty_levels_skipped,
+			mixed_kinds_returned,
+			project_scope_empty,
+			unknown_class_empty,
+			non_class_nref_empty
 		]},
 		{cache_audit, [], [
 			verify_caches_passes_after_rule_creation
@@ -772,6 +797,168 @@ duplicate_child_class_with_different_modes(_Config) ->
 
 
 %%=============================================================================
+%% Effective Rules Tests (B1 -- taxonomy walk)
+%%=============================================================================
+%% effective_rules_for_class/2 gathers rules from the class AND its taxonomy
+%% ancestors, nearest-first, grouped by attaching class, each paired with that
+%% attachment's deployment map.  It resolves nothing -- every level survives.
+
+self_only_no_ancestors(_Config) ->
+	Car = make_class("Car"),
+	Eng = make_class("Engine"),
+	{ok, R} = graphdb_rules:create_composition_rule(
+		environment, "has-engine", Car, Eng, mandatory, 1),
+	{ok, Levels} = graphdb_rules:effective_rules_for_class(environment, Car),
+	?assertEqual([Car], level_nrefs(Levels)),
+	?assertEqual([R], rule_nrefs_at(Car, Levels)).
+
+linear_chain_nearest_first(_Config) ->
+	Vehicle = make_class("Vehicle"),
+	{ok, Car}    = graphdb_class:create_class("Car", Vehicle),
+	{ok, Sports} = graphdb_class:create_class("SportsCar", Car),
+	Eng   = make_class("Engine"),
+	Wheel = make_class("SteeringWheel"),
+	Spoil = make_class("Spoiler"),
+	{ok, RV} = graphdb_rules:create_composition_rule(
+		environment, "v-engine", Vehicle, Eng, mandatory, 1),
+	{ok, RC} = graphdb_rules:create_composition_rule(
+		environment, "c-wheel", Car, Wheel, mandatory, 1),
+	{ok, RS} = graphdb_rules:create_composition_rule(
+		environment, "s-spoiler", Sports, Spoil, auto, 1),
+	{ok, Levels} = graphdb_rules:effective_rules_for_class(environment, Sports),
+	%% nearest-first: SportsCar, then Car, then Vehicle
+	?assertEqual([Sports, Car, Vehicle], level_nrefs(Levels)),
+	?assertEqual([RS], rule_nrefs_at(Sports, Levels)),
+	?assertEqual([RC], rule_nrefs_at(Car, Levels)),
+	?assertEqual([RV], rule_nrefs_at(Vehicle, Levels)).
+
+diamond_dag_dedup(_Config) ->
+	Top  = make_class("Component"),
+	{ok, Mid1} = graphdb_class:create_class("Electrical", Top),
+	{ok, Mid2} = graphdb_class:create_class("Mechanical", Top),
+	{ok, Bot}  = graphdb_class:create_class("Alternator", Mid1),
+	ok = graphdb_class:add_superclass(Bot, Mid2),
+	Wid = make_class("Winding"),
+	Cas = make_class("Casing"),
+	{ok, RT} = graphdb_rules:create_composition_rule(
+		environment, "comp-winding", Top, Wid, mandatory, 1),
+	{ok, RB} = graphdb_rules:create_composition_rule(
+		environment, "alt-casing", Bot, Cas, auto, 1),
+	{ok, Levels} = graphdb_rules:effective_rules_for_class(environment, Bot),
+	Names = level_nrefs(Levels),
+	%% Top appears exactly once despite being reachable via two parents.
+	%% Mid1/Mid2 carry no rules and are omitted (empty levels).
+	?assertEqual(1, length([L || L <- Names, L =:= Top])),
+	?assertEqual([Bot, Top], Names),
+	?assertEqual([RB], rule_nrefs_at(Bot, Levels)),
+	?assertEqual([RT], rule_nrefs_at(Top, Levels)).
+
+shared_rule_node_across_ancestors(_Config) ->
+	%% A and B are two superclasses of Bot.  ONE rule node is attached to
+	%% BOTH (F4 D12 reuse).  It must appear once per attaching ancestor, each
+	%% occurrence carrying that ancestor's own deployment.
+	A = make_class("Insurable"),
+	B = make_class("Taxable"),
+	{ok, Bot} = graphdb_class:create_class("Vehicle", A),
+	ok = graphdb_class:add_superclass(Bot, B),
+	Doc = make_class("Document"),
+	{ok, R} = graphdb_rules:create_composition_rule(
+		environment, "needs-document", A, Doc, mandatory, 1),
+	ok = attach_existing_rule(B, R, mandatory, 3),
+	{ok, Levels} = graphdb_rules:effective_rules_for_class(environment, Bot),
+	?assertEqual([A, B], level_nrefs(Levels)),
+	?assertMatch([{#node{nref = R}, #{multiplicity := 1}}], pairs_at(A, Levels)),
+	?assertMatch([{#node{nref = R}, #{multiplicity := 3}}], pairs_at(B, Levels)).
+
+deployment_avps_surfaced(_Config) ->
+	Car = make_class("Car"),
+	Whl = make_class("Wheel"),
+	{ok, DT} = graphdb_class:default_template(Car),
+	{ok, _R} = graphdb_rules:create_composition_rule(
+		environment, "wheels", Car, Whl, auto, 4, DT),
+	{ok, Levels} = graphdb_rules:effective_rules_for_class(environment, Car),
+	[{_RuleNode, Deploy}] = pairs_at(Car, Levels),
+	?assertEqual(auto, maps:get(mode, Deploy)),
+	?assertEqual(4, maps:get(multiplicity, Deploy)),
+	?assertEqual(DT, maps:get(template, Deploy)).
+
+additive_parent_and_child(_Config) ->
+	%% Parent mandates a wheel-group (mult 1); subclass adds more (mult 4) for
+	%% the SAME child class.  B1 drops nothing -- both survive, each with its
+	%% own deployment.  The firing engine (B2/B5) decides additive-vs-shadow.
+	Vehicle = make_class("Vehicle"),
+	{ok, Car} = graphdb_class:create_class("Car", Vehicle),
+	Wheel = make_class("Wheel"),
+	{ok, RV} = graphdb_rules:create_composition_rule(
+		environment, "v-wheel", Vehicle, Wheel, mandatory, 1),
+	{ok, RC} = graphdb_rules:create_composition_rule(
+		environment, "c-wheel", Car, Wheel, mandatory, 4),
+	{ok, Levels} = graphdb_rules:effective_rules_for_class(environment, Car),
+	?assertEqual([Car, Vehicle], level_nrefs(Levels)),
+	?assertEqual([RC], rule_nrefs_at(Car, Levels)),
+	?assertEqual([RV], rule_nrefs_at(Vehicle, Levels)),
+	[{_, DC}] = pairs_at(Car, Levels),
+	[{_, DV}] = pairs_at(Vehicle, Levels),
+	?assertEqual(4, maps:get(multiplicity, DC)),
+	?assertEqual(1, maps:get(multiplicity, DV)).
+
+empty_levels_skipped(_Config) ->
+	Vehicle = make_class("Vehicle"),
+	{ok, Car}    = graphdb_class:create_class("Car", Vehicle),
+	{ok, Sports} = graphdb_class:create_class("SportsCar", Car),
+	Spoil = make_class("Spoiler"),
+	Eng   = make_class("Engine"),
+	%% Rules on Sports and Vehicle only; the middle level (Car) has none.
+	{ok, RS} = graphdb_rules:create_composition_rule(
+		environment, "s-spoiler", Sports, Spoil, auto, 1),
+	{ok, RV} = graphdb_rules:create_composition_rule(
+		environment, "v-engine", Vehicle, Eng, mandatory, 1),
+	{ok, Levels} = graphdb_rules:effective_rules_for_class(environment, Sports),
+	%% Car omitted entirely; nearest-first order preserved.
+	?assertEqual([Sports, Vehicle], level_nrefs(Levels)),
+	?assertEqual([RS], rule_nrefs_at(Sports, Levels)),
+	?assertEqual([RV], rule_nrefs_at(Vehicle, Levels)).
+
+mixed_kinds_returned(_Config) ->
+	Car   = make_class("Car"),
+	Eng   = make_class("Engine"),
+	Maker = make_class("Manufacturer"),
+	Char  = make_rel_char("made_by", "makes"),
+	{ok, RComp} = graphdb_rules:create_composition_rule(
+		environment, "has-engine", Car, Eng, mandatory, 1),
+	{ok, RConn} = graphdb_rules:create_connection_rule(
+		environment, "made-by", Car, Char, Maker, mandatory, 1),
+	{ok, Levels} = graphdb_rules:effective_rules_for_class(environment, Car),
+	{ok, S} = graphdb_rules:seeded_nrefs(),
+	Comp = maps:get(composition_rule, S),
+	Conn = maps:get(connection_rule, S),
+	Pairs = pairs_at(Car, Levels),
+	%% B1-D4 consumer pattern: inline kind filter over the gathered pairs.
+	CompNrefs = [N#node.nref || {N, _D} <- Pairs,
+				 lists:member(Comp, N#node.classes)],
+	ConnNrefs = [N#node.nref || {N, _D} <- Pairs,
+				 lists:member(Conn, N#node.classes)],
+	?assertEqual([RComp], CompNrefs),
+	?assertEqual([RConn], ConnNrefs).
+
+project_scope_empty(_Config) ->
+	Car = make_class("Car"),
+	?assertEqual({ok, []},
+		graphdb_rules:effective_rules_for_class({project, 1}, Car)).
+
+unknown_class_empty(_Config) ->
+	%% Non-existent nref: ancestors/1 -> {error, not_found}, mapped to [].
+	?assertEqual({ok, []},
+		graphdb_rules:effective_rules_for_class(environment, 999999)).
+
+non_class_nref_empty(_Config) ->
+	%% nref 6 (Names) is an attribute node, not a class:
+	%% ancestors/1 -> {error, not_a_class}, mapped to [].
+	?assertEqual({ok, []},
+		graphdb_rules:effective_rules_for_class(environment, ?NREF_NAMES)).
+
+
+%%=============================================================================
 %% Cache Audit Tests
 %%=============================================================================
 %% Rule creation writes instantiation + applies_to arcs.  This asserts the
@@ -816,6 +1003,52 @@ make_rel_char(Name, Recip) ->
 	{ok, {Fwd, _Rev}} =
 		graphdb_attr:create_relationship_attribute_pair(Name, Recip, class),
 	Fwd.
+
+%% level_nrefs(Levels) -> [integer()]
+%% The ordered list of attaching-class nrefs in an effective_rules result.
+level_nrefs(Levels) ->
+	[L || {L, _Pairs} <- Levels].
+
+%% pairs_at(LevelNref, Levels) -> [{#node{}, map()}]
+%% The {RuleNode, Deployment} pairs grouped under LevelNref.
+pairs_at(Level, Levels) ->
+	{Level, Pairs} = lists:keyfind(Level, 1, Levels),
+	Pairs.
+
+%% rule_nrefs_at(LevelNref, Levels) -> [integer()]
+%% The rule nrefs grouped under LevelNref.
+rule_nrefs_at(Level, Levels) ->
+	[N#node.nref || {N, _D} <- pairs_at(Level, Levels)].
+
+%% attach_existing_rule(OwnerClass, RuleNref, Mode, Mult) -> ok
+%% Writes a SECOND applies_to/applied_by connection arc pair from OwnerClass to
+%% an already-existing rule node (F4 D12 reuse), stamped with OwnerClass's own
+%% deployment.  Connection arcs are not part of the parents/classes caches, so
+%% this does not disturb verify_caches/0.  Used by
+%% shared_rule_node_across_ancestors to make one rule node reachable from two
+%% ancestors.
+attach_existing_rule(OwnerClass, RuleNref, Mode, Mult) ->
+	{ok, S} = graphdb_rules:seeded_nrefs(),
+	AppliesTo = maps:get(applies_to, S),
+	AppliedBy = maps:get(applied_by, S),
+	ModeAttr  = maps:get(mode_attr, S),
+	MultAttr  = maps:get(multiplicity_attr, S),
+	{ok, DT}  = graphdb_class:default_template(OwnerClass),
+	{Id1, Id2} = rel_id_server:get_id_pair(),
+	Deploy = [#{attribute => ?ARC_TEMPLATE, value => DT},
+			  #{attribute => ModeAttr, value => Mode},
+			  #{attribute => MultAttr, value => Mult}],
+	Fwd = #relationship{id = Id1, kind = connection, source_nref = OwnerClass,
+		characterization = AppliesTo, target_nref = RuleNref,
+		reciprocal = AppliedBy, avps = Deploy},
+	Rev = #relationship{id = Id2, kind = connection, source_nref = RuleNref,
+		characterization = AppliedBy, target_nref = OwnerClass,
+		reciprocal = AppliesTo, avps = []},
+	{atomic, ok} = mnesia:transaction(fun() ->
+		ok = mnesia:write(relationships, Fwd, write),
+		ok = mnesia:write(relationships, Rev, write)
+	end),
+	ok.
 
 %% node_read2(Nref) -> {ok, #node{}} | not_found
 node_read2(Nref) ->
