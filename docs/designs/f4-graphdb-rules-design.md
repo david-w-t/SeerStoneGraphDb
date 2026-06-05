@@ -529,20 +529,20 @@ In Phase A:
 
 All checks run inside the create transaction before any write.
 
-| Error atom                        | Trigger                                                     |
-| --------------------------------- | ----------------------------------------------------------- |
-| `class_not_found`                 | Owning class (ParentClass / SourceClass) does not exist     |
-| `not_a_class`                     | Owning class exists but `kind ≠ class`                      |
+| Error atom                             | Trigger                                                                                                                                     |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `class_not_found`                      | Owning class (ParentClass / SourceClass) does not exist                                                                                     |
+| `not_a_class`                          | Owning class exists but `kind ≠ class`                                                                                                      |
 | `owning_class_has_no_default_template` | Owning class is abstract (L9 `instantiable=false`) or had its default template deleted, so the `applies_to` arc has no template to scope it |
-| `referenced_class_not_found`      | ChildClass / TargetClass does not exist                     |
-| `referenced_not_a_class`          | Referenced node exists but `kind ≠ class`                   |
-| `characterization_not_found`      | Characterization nref does not exist (ConnectionRule)       |
-| `not_a_relationship_attribute`    | Characterization exists but is not a relationship attribute |
-| `template_not_found`              | Optional `TemplateNref` does not exist                      |
-| `not_a_template`                  | Template nref exists but `kind ≠ template`                  |
-| `invalid_mode`                    | Mode ∉ `{mandatory, auto, propose}`                         |
-| `invalid_multiplicity`            | Multiplicity ∉ `pos_integer() ∪ {unbounded}`                |
-| `project_rules_not_yet_supported` | Scope = `{project, _}` (L6 placeholder; Phase A only)       |
+| `referenced_class_not_found`           | ChildClass / TargetClass does not exist                                                                                                     |
+| `referenced_not_a_class`               | Referenced node exists but `kind ≠ class`                                                                                                   |
+| `characterization_not_found`           | Characterization nref does not exist (ConnectionRule)                                                                                       |
+| `not_a_relationship_attribute`         | Characterization exists but is not a relationship attribute                                                                                 |
+| `template_not_found`                   | Optional `TemplateNref` does not exist                                                                                                      |
+| `not_a_template`                       | Template nref exists but `kind ≠ template`                                                                                                  |
+| `invalid_mode`                         | Mode ∉ `{mandatory, auto, propose}`                                                                                                         |
+| `invalid_multiplicity`                 | Multiplicity ∉ `pos_integer() ∪ {unbounded}`                                                                                                |
+| `project_rules_not_yet_supported`      | Scope = `{project, _}` (L6 placeholder; Phase A only)                                                                                       |
 
 Errors are returned as `{error, AtomReason}` (or, where useful for
 diagnostics, `{error, {AtomReason, OffendingValue}}`).
@@ -733,18 +733,24 @@ parent" exit) is now taken.
 Items surfaced during design that Phase A deliberately leaves for
 later phases or follow-up tasks.
 
-**OI-1. Effective rules (taxonomy walk).** `rules_for_class/2`
-returns directly-attached rules only. Phase B will add an
-`effective_rules_for_class/2` that walks class taxonomy ancestors so
-subclass instances inherit superclass composition rules. The shape:
+**OI-1. Effective rules (taxonomy walk) — RESOLVED (B1).**
+`rules_for_class/2` returns directly-attached rules only.
+`effective_rules_for_class/2` (Phase B / division B1) walks class
+taxonomy ancestors so subclass instances inherit superclass rules. The
+shape:
 
 ```erlang
 effective_rules_for_class(Scope, ClassNref) ->
-    {ok, [{AncestorNref, [#node{}]}]}.
+    {ok, [{AncestorNref, [{RuleNode :: #node{}, Deployment :: map()}]}]}.
 ```
 
-Returns rules grouped by which ancestor they came from, so the engine
-can apply override/shadow semantics.
+Returns rules grouped by which ancestor they came from, nearest-first,
+each paired with that attachment's deployment map
+(`#{mode, multiplicity, template}`) read from the `applies_to` arc — the
+bare `[#node{}]` element shape was insufficient because deployment lives
+per-attachment on the arc, not on the rule node. B1 resolves nothing;
+the firing engine (B2/B5) applies override/shadow/additive semantics.
+See `docs/designs/f4-phase-b1-effective-rules-design.md`.
 
 **OI-2. Rule conflicts and precedence.** If two CompositionRules
 attached to the same class both create a child of the same class,
@@ -795,6 +801,21 @@ This section is intentionally light. Each subsequent phase will have
 its own dedicated brainstorm + design + plan cycle.
 
 ### Phase B — Composition Engine
+
+Phase B (the rule-*firing* engine) is itself split into five
+independently shippable divisions, each with its own brainstorm →
+design → plan → implement cycle:
+
+| Div    | Subject                                                                        | Depends on | Design                                               |
+| ------ | ------------------------------------------------------------------------------ | ---------- | ---------------------------------------------------- |
+| **B1** | `effective_rules_for_class/2` — read-side taxonomy walk (no firing)            | A          | `docs/designs/f4-phase-b1-effective-rules-design.md` |
+| **B2** | Composition firing engine — `mandatory` + `auto`; cascade; return-shape change | B1         | —                                                    |
+| **B3** | `propose` mode + interactive/non-interactive session flag (`graphdb_query`)    | B2         | —                                                    |
+| **B4** | Connection firing engine (Mandatory Connections, §10)                          | B1         | —                                                    |
+| **B5** | Horizontal conflict resolution / precedence (OI-2) — rules at one class level  | B2         | —                                                    |
+
+The composition engine described below is the **B2** division; B1 is
+the read-side prerequisite that gathers the rules it fires.
 
 Triggered by `graphdb_instance:create_instance/3`. Walks
 `effective_rules_for_class/2` on the new instance's class for
