@@ -91,6 +91,7 @@
 		seeded_nrefs/0,
 		create_composition_rule/6,
 		create_composition_rule/7,
+		create_composition_rule/8,
 		create_connection_rule/7,
 		create_connection_rule/8,
 		get_rule/2,
@@ -154,7 +155,11 @@ seeded_nrefs() ->
 %% create_composition_rule(Scope, Name, ParentClass, ChildClass, Mode, Mult)
 %% create_composition_rule(Scope, Name, ParentClass, ChildClass, Mode, Mult,
 %%                         TemplateNref)
+%% create_composition_rule(Scope, Name, ParentClass, ChildClass, Mode, Mult,
+%%                         TemplateNref, Opts)
 %%     -> {ok, RuleNref} | {error, term()}
+%%
+%% Opts :: #{name_pattern => string()} — optional keys; unknown keys ignored.
 %%
 %% Creates a composition rule: a kind=instance node whose class membership
 %% is the seeded CompositionRule meta-class.  Rule content (child_class_nref,
@@ -165,13 +170,18 @@ seeded_nrefs() ->
 %%-----------------------------------------------------------------------------
 create_composition_rule(Scope, Name, ParentClass, ChildClass, Mode, Mult) ->
 	create_composition_rule(Scope, Name, ParentClass, ChildClass, Mode, Mult,
-							undefined).
+							undefined, #{}).
 
 create_composition_rule(Scope, Name, ParentClass, ChildClass, Mode, Mult,
 						TemplateNref) ->
+	create_composition_rule(Scope, Name, ParentClass, ChildClass, Mode, Mult,
+							TemplateNref, #{}).
+
+create_composition_rule(Scope, Name, ParentClass, ChildClass, Mode, Mult,
+						TemplateNref, Opts) when is_map(Opts) ->
 	gen_server:call(?MODULE,
 		{create_composition_rule, Scope, Name, ParentClass, ChildClass,
-		 Mode, Mult, TemplateNref}).
+		 Mode, Mult, TemplateNref, Opts}).
 
 %%-----------------------------------------------------------------------------
 %% create_connection_rule(Scope, Name, SourceClass, Char, TargetClass, Mode,
@@ -333,20 +343,21 @@ handle_call(seeded_nrefs, _From, State) ->
 		name_pattern               => State#state.name_pattern_attr
 	}}, State};
 handle_call({create_composition_rule, environment, Name, ParentClass,
-			 ChildClass, Mode, Mult, TemplateNref}, _From, State) ->
+			 ChildClass, Mode, Mult, TemplateNref, Opts}, _From, State) ->
 	Reply = case validate_composition(ParentClass, ChildClass, Mode, Mult,
 									  TemplateNref) of
 		ok ->
 			ContentAVPs = [#{attribute => State#state.child_class_nref_attr,
 							 value => ChildClass}
-						   | optional_template_avp(TemplateNref, State)],
+						   | optional_template_avp(TemplateNref, State)]
+						  ++ optional_name_pattern_avp(Opts, State),
 			do_create_rule(State#state.composition_rule_nref, Name,
 				ParentClass, ContentAVPs, Mode, Mult, State);
 		{error, _} = Err ->
 			Err
 	end,
 	{reply, Reply, State};
-handle_call({create_composition_rule, {project, _}, _, _, _, _, _, _},
+handle_call({create_composition_rule, {project, _}, _, _, _, _, _, _, _},
 			_From, State) ->
 	{reply, {error, project_rules_not_yet_supported}, State};
 handle_call({create_connection_rule, environment, Name, SourceClass, Char,
@@ -696,6 +707,15 @@ do_create_rule(MetaClassNref, Name, OwningClass, ContentAVPs, Mode, Mult,
 optional_template_avp(undefined, _State) -> [];
 optional_template_avp(TemplateNref, State) ->
 	[#{attribute => State#state.template_nref_attr, value => TemplateNref}].
+
+%% optional_name_pattern_avp(Opts, State) -> [AVP] | []
+%% The optional name_pattern content AVP on the rule node (B2-D7).
+optional_name_pattern_avp(Opts, State) ->
+	case maps:get(name_pattern, Opts, undefined) of
+		undefined -> [];
+		Pattern   -> [#{attribute => State#state.name_pattern_attr,
+						value => Pattern}]
+	end.
 
 
 %%---------------------------------------------------------------------

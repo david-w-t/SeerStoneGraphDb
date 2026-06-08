@@ -104,6 +104,8 @@
 	mixed_rules_on_one_class/1,
 	rule_isolation_across_class_taxonomy/1,
 	duplicate_child_class_with_different_modes/1,
+	%% name_pattern (B2 Task 2)
+	composition_rule_carries_name_pattern/1,
 	%% effective (B1 taxonomy walk)
 	self_only_no_ancestors/1,
 	linear_chain_nearest_first/1,
@@ -148,7 +150,8 @@ groups() ->
 			creates_composition_rule_with_template,
 			applies_to_arc_pair_written,
 			instance_to_class_membership_written,
-			avps_present_and_correct
+			avps_present_and_correct,
+			composition_rule_carries_name_pattern
 		]},
 		{connection, [], [
 			creates_connection_rule_minimal,
@@ -447,6 +450,18 @@ avps_present_and_correct(_Config) ->
 	%% no deployment AVPs leaked onto the node
 	ModeAttr = maps:get(mode_attr, S),
 	?assertNot(lists:any(fun(#{attribute := A}) -> A =:= ModeAttr end, AVPs)).
+
+composition_rule_carries_name_pattern(_Config) ->
+	Owner = make_class("Car"),
+	Child = make_class("Engine"),
+	{ok, RuleNref} = graphdb_rules:create_composition_rule(
+		environment, "PatRule", Owner, Child, mandatory, 2, undefined,
+		#{name_pattern => "Bolt {i}"}),
+	{ok, #node{attribute_value_pairs = AVPs}} =
+		graphdb_rules:get_rule(environment, RuleNref),
+	{ok, Seeds} = graphdb_rules:seeded_nrefs(),
+	NP = maps:get(name_pattern, Seeds),
+	?assertEqual({ok, "Bolt {i}"}, find_avp(AVPs, NP)).
 
 
 %%=============================================================================
@@ -986,6 +1001,15 @@ verify_caches_passes_after_rule_creation(_Config) ->
 %%=============================================================================
 %% Local test helpers
 %%=============================================================================
+
+%% find_avp(AVPs, AttrNref) -> {ok, Value} | not_found
+%% Searches an AVP list for an entry whose attribute key equals AttrNref;
+%% returns {ok, Value} on the first match, not_found if absent.
+find_avp(AVPs, A) ->
+	case lists:search(fun(#{attribute := X}) -> X =:= A end, AVPs) of
+		{value, #{value := V}} -> {ok, V};
+		false                  -> not_found
+	end.
 
 %% make_class(Name) -> Nref
 %% Creates a (non-abstract) domain class under ?NREF_CLASSES.
