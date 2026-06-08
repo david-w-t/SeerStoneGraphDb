@@ -131,7 +131,10 @@
 	firing_single_mandatory/1,
 	firing_mandatory_mult/1,
 	firing_mandatory_cascade_atomic/1,
-	firing_mandatory_failure_rolls_back/1
+	firing_mandatory_failure_rolls_back/1,
+	firing_auto_best_effort/1,
+	firing_auto_failure_survives/1,
+	firing_auto_cascade_merges/1
 ]).
 
 
@@ -226,7 +229,10 @@ groups() ->
 			firing_single_mandatory,
 			firing_mandatory_mult,
 			firing_mandatory_cascade_atomic,
-			firing_mandatory_failure_rolls_back
+			firing_mandatory_failure_rolls_back,
+			firing_auto_best_effort,
+			firing_auto_failure_survives,
+			firing_auto_cascade_merges
 		]}
 	].
 
@@ -283,7 +289,9 @@ init_per_testcase(TC, Config) ->
 setup_firing_fixtures(TC, Config) ->
 	FiringTests = [firing_no_rules_baseline, firing_single_mandatory,
 				   firing_mandatory_mult, firing_mandatory_cascade_atomic,
-				   firing_mandatory_failure_rolls_back],
+				   firing_mandatory_failure_rolls_back,
+				   firing_auto_best_effort, firing_auto_failure_survives,
+				   firing_auto_cascade_merges],
 	case lists:member(TC, FiringTests) of
 		true ->
 			{ok, #{instantiable := InstAttr}} = graphdb_attr:seeded_nrefs(),
@@ -1369,6 +1377,48 @@ firing_mandatory_failure_rolls_back(Config) ->
 		fun(#{outcomes := Os}) ->
 			lists:any(fun(#{status := S}) -> S =:= failed end, Os)
 		end, Report)).
+
+
+%%-----------------------------------------------------------------------------
+%% An auto rule fires best-effort post-commit; root is created and the auto
+%% child appears in the compositional tree.
+%%-----------------------------------------------------------------------------
+firing_auto_best_effort(Config) ->
+	{Owner, Bolt} = ?config(ob, Config),
+	{ok, _} = graphdb_rules:create_composition_rule(
+		environment, "OBauto", Owner, Bolt, auto, 1),
+	{ok, Root, Report} = graphdb_instance:create_instance("car", Owner, 5),
+	{ok, [_]} = graphdb_instance:children(Root),       %% auto child created
+	?assertEqual(#{fired => 1, failed => 0, not_attempted => 0},
+				 graphdb_instance:summarize(Report)).
+
+%%-----------------------------------------------------------------------------
+%% An auto rule targeting an abstract class fails (best-effort); the root
+%% instance survives and the report carries one failed outcome.
+%%-----------------------------------------------------------------------------
+firing_auto_failure_survives(Config) ->
+	{Owner, Abstract} = ?config(oa, Config),
+	{ok, _} = graphdb_rules:create_composition_rule(
+		environment, "OAauto", Owner, Abstract, auto, 1),
+	{ok, Root, Report} = graphdb_instance:create_instance("car", Owner, 5),
+	?assert(is_integer(Root)),                         %% root survived
+	?assertEqual(#{fired => 0, failed => 1, not_attempted => 0},
+				 graphdb_instance:summarize(Report)).
+
+%%-----------------------------------------------------------------------------
+%% Owner -auto-> Bolt; Bolt -mandatory-> Widget.  The auto Bolt and its
+%% mandatory Widget both fire; the merged report carries two fired outcomes.
+%%-----------------------------------------------------------------------------
+firing_auto_cascade_merges(Config) ->
+	{Owner, Bolt, Widget} = ?config(obw, Config),
+	{ok, _} = graphdb_rules:create_composition_rule(
+		environment, "OBauto", Owner, Bolt, auto, 1),
+	{ok, _} = graphdb_rules:create_composition_rule(
+		environment, "BW", Bolt, Widget, mandatory, 1),
+	{ok, _Root, Report} = graphdb_instance:create_instance("car", Owner, 5),
+	%% the auto Bolt and its mandatory Widget both fired
+	?assertEqual(#{fired => 2, failed => 0, not_attempted => 0},
+				 graphdb_instance:summarize(Report)).
 
 
 %%=============================================================================

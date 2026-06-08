@@ -597,9 +597,78 @@ instance_records(Nref, ClassNref, Name, ParentNref) ->
 %%-----------------------------------------------------------------------------
 %% fire_auto(InstPlan, OnPath) -> report()
 %%
-%% POST-COMMIT best-effort auto firing (Task 6).  Stub for Task 5.
+%% POST-COMMIT best-effort auto firing.  Walks the instantiated plan tree and
+%% fires each node's auto rules by recursing do_create_instance/5 (never the
+%% gen_server API — self-call deadlock).  Merges sub-reports additively.
+%% Failures are recorded in the report but do not abort the root instance.
 %%-----------------------------------------------------------------------------
-fire_auto(_InstPlan, _OnPath) -> [].
+fire_auto(#{nref := Nref, class := Class, auto_rules := Autos,
+			mandatory_children := Kids}, OnPath) ->
+	OnPath1 = [Class | OnPath],
+	Here = lists:foldl(
+		fun({RuleNode, Deploy}, Acc) ->
+			fire_one_auto(RuleNode, Deploy, Nref, OnPath1, Acc)
+		end, [], Autos),
+	lists:foldl(
+		fun(Child, Acc) -> merge_reports(Acc, fire_auto(Child, OnPath1)) end,
+		Here, Kids).
+
+%%-----------------------------------------------------------------------------
+%% fire_one_auto(RuleNode, Deploy, OwnerNref, OnPath1, Acc) -> report()
+%%
+%% Check order matches design §3.3: instantiable, then unbounded, then the
+%% vertical-cycle cut, then expansion.
+%%-----------------------------------------------------------------------------
+fire_one_auto(RuleNode, Deploy, OwnerNref, OnPath1, Acc) ->
+	ChildClass = graphdb_rules:rule_child_class(RuleNode),
+	case graphdb_class:is_instantiable(ChildClass) of
+		false ->
+			add_outcome(Acc, RuleNode, Deploy,
+				#{owner => OwnerNref, index => 1, status => failed,
+				  reason => {class_not_instantiable, ChildClass}});
+		_ ->        %% true (or {error,_} -> treated as fireable; create reports)
+			case maps:get(multiplicity, Deploy, 1) of
+				unbounded ->
+					add_outcome(Acc, RuleNode, Deploy,
+						#{owner => OwnerNref, index => 1, status => failed,
+						  reason => unbounded_multiplicity_not_fireable});
+				Mult ->
+					case lists:member(ChildClass, OnPath1) of
+						true  -> Acc;       %% vertical cycle cut (B2-D5)
+						false -> fire_auto_children(RuleNode, Deploy, ChildClass,
+											Mult, 1, OwnerNref, OnPath1, Acc)
+					end
+			end
+	end.
+
+%%-----------------------------------------------------------------------------
+%% fire_auto_children — expand multiplicity, recursing do_create_instance/5
+%%-----------------------------------------------------------------------------
+fire_auto_children(_RuleNode, _Deploy, _ChildClass, Mult, I, _Owner, _OnPath1,
+				   Acc) when I > Mult ->
+	Acc;
+fire_auto_children(RuleNode, Deploy, ChildClass, Mult, I, OwnerNref, OnPath1,
+				   Acc) ->
+	Name = graphdb_rules:rule_child_name(RuleNode, ChildClass, I, Mult),
+	Acc2 = case do_create_instance(Name, ChildClass, OwnerNref, undefined,
+								   OnPath1) of
+		{ok, ChildNref, SubReport} ->
+			A1 = add_outcome(Acc, RuleNode, Deploy,
+					#{owner => OwnerNref, index => I, status => fired,
+					  child => ChildNref}),
+			merge_reports(A1, SubReport);
+		{error, R, SubReport} ->
+			A1 = add_outcome(Acc, RuleNode, Deploy,
+					#{owner => OwnerNref, index => I, status => failed,
+					  reason => R}),
+			merge_reports(A1, SubReport);
+		{error, R} ->        %% pre-PLAN 2-tuple (bad class/parent)
+			add_outcome(Acc, RuleNode, Deploy,
+					#{owner => OwnerNref, index => I, status => failed,
+					  reason => R})
+	end,
+	fire_auto_children(RuleNode, Deploy, ChildClass, Mult, I + 1, OwnerNref,
+					   OnPath1, Acc2).
 
 
 %%-----------------------------------------------------------------------------
