@@ -134,7 +134,14 @@
 	firing_mandatory_failure_rolls_back/1,
 	firing_auto_best_effort/1,
 	firing_auto_failure_survives/1,
-	firing_auto_cascade_merges/1
+	firing_auto_cascade_merges/1,
+	firing_propose_outcome_in_report/1,
+	firing_propose_not_materialised/1,
+	firing_propose_multiplicity_bounded/1,
+	firing_propose_multiplicity_unbounded/1,
+	firing_propose_on_path_cut/1,
+	firing_propose_summarize/1,
+	firing_propose_with_mandatory_and_auto/1
 ]).
 
 
@@ -232,7 +239,14 @@ groups() ->
 			firing_mandatory_failure_rolls_back,
 			firing_auto_best_effort,
 			firing_auto_failure_survives,
-			firing_auto_cascade_merges
+			firing_auto_cascade_merges,
+			firing_propose_outcome_in_report,
+			firing_propose_not_materialised,
+			firing_propose_multiplicity_bounded,
+			firing_propose_multiplicity_unbounded,
+			firing_propose_on_path_cut,
+			firing_propose_summarize,
+			firing_propose_with_mandatory_and_auto
 		]}
 	].
 
@@ -291,7 +305,14 @@ setup_firing_fixtures(TC, Config) ->
 				   firing_mandatory_mult, firing_mandatory_cascade_atomic,
 				   firing_mandatory_failure_rolls_back,
 				   firing_auto_best_effort, firing_auto_failure_survives,
-				   firing_auto_cascade_merges],
+				   firing_auto_cascade_merges,
+				   firing_propose_outcome_in_report,
+				   firing_propose_not_materialised,
+				   firing_propose_multiplicity_bounded,
+				   firing_propose_multiplicity_unbounded,
+				   firing_propose_on_path_cut,
+				   firing_propose_summarize,
+				   firing_propose_with_mandatory_and_auto],
 	case lists:member(TC, FiringTests) of
 		true ->
 			{ok, #{instantiable := InstAttr}} = graphdb_attr:seeded_nrefs(),
@@ -1389,7 +1410,7 @@ firing_auto_best_effort(Config) ->
 		environment, "OBauto", Owner, Bolt, auto, 1),
 	{ok, Root, Report} = graphdb_instance:create_instance("car", Owner, 5),
 	{ok, [_]} = graphdb_instance:children(Root),       %% auto child created
-	?assertEqual(#{fired => 1, failed => 0, not_attempted => 0},
+	?assertEqual(#{fired => 1, failed => 0, not_attempted => 0, proposed => 0},
 				 graphdb_instance:summarize(Report)).
 
 %%-----------------------------------------------------------------------------
@@ -1402,7 +1423,7 @@ firing_auto_failure_survives(Config) ->
 		environment, "OAauto", Owner, Abstract, auto, 1),
 	{ok, Root, Report} = graphdb_instance:create_instance("car", Owner, 5),
 	?assert(is_integer(Root)),                         %% root survived
-	?assertEqual(#{fired => 0, failed => 1, not_attempted => 0},
+	?assertEqual(#{fired => 0, failed => 1, not_attempted => 0, proposed => 0},
 				 graphdb_instance:summarize(Report)).
 
 %%-----------------------------------------------------------------------------
@@ -1417,7 +1438,115 @@ firing_auto_cascade_merges(Config) ->
 		environment, "BW", Bolt, Widget, mandatory, 1),
 	{ok, _Root, Report} = graphdb_instance:create_instance("car", Owner, 5),
 	%% the auto Bolt and its mandatory Widget both fired
-	?assertEqual(#{fired => 2, failed => 0, not_attempted => 0},
+	?assertEqual(#{fired => 2, failed => 0, not_attempted => 0, proposed => 0},
+				 graphdb_instance:summarize(Report)).
+
+%%-----------------------------------------------------------------------------
+%% B3: a propose rule surfaces a `proposed` outcome carrying owner (the
+%% materialised parent), proposed_class, index and name — and creates NOTHING.
+%%-----------------------------------------------------------------------------
+firing_propose_outcome_in_report(Config) ->
+	{Owner, Bolt} = ?config(ob, Config),
+	{ok, _} = graphdb_rules:create_composition_rule(
+		environment, "OBpropose", Owner, Bolt, propose, 1),
+	{ok, Root, Report} = graphdb_instance:create_instance("car", Owner, 5),
+	%% no child materialised
+	?assertEqual({ok, []}, graphdb_instance:children(Root)),
+	%% exactly one proposed outcome, owner=Root, proposed_class=Bolt, no child key
+	[#{outcomes := [Outcome]}] = Report,
+	?assertEqual(proposed, maps:get(status, Outcome)),
+	?assertEqual(Root, maps:get(owner, Outcome)),
+	?assertEqual(Bolt, maps:get(proposed_class, Outcome)),
+	?assertEqual(1, maps:get(index, Outcome)),
+	?assertNot(maps:is_key(child, Outcome)).      %% no created-instance key
+
+%%-----------------------------------------------------------------------------
+%% B3: a propose rule materialises nothing — node table size is unchanged
+%% beyond the single root instance.
+%%-----------------------------------------------------------------------------
+firing_propose_not_materialised(Config) ->
+	{Owner, Bolt} = ?config(ob, Config),
+	{ok, _} = graphdb_rules:create_composition_rule(
+		environment, "OBpropose", Owner, Bolt, propose, 3),
+	Before = mnesia:table_info(nodes, size),
+	{ok, _Root, _Report} = graphdb_instance:create_instance("car", Owner, 5),
+	After = mnesia:table_info(nodes, size),
+	?assertEqual(Before + 1, After).      %% only the root, no proposed children
+
+%%-----------------------------------------------------------------------------
+%% B3: multiplicity=3 propose yields three proposed outcomes, indices 1..3,
+%% names per name_pattern.
+%%-----------------------------------------------------------------------------
+firing_propose_multiplicity_bounded(Config) ->
+	{Owner, Bolt} = ?config(ob, Config),
+	{ok, _} = graphdb_rules:create_composition_rule(
+		environment, "OBpropose", Owner, Bolt, propose, 3, undefined,
+		#{name_pattern => "Spare {i}"}),
+	{ok, _Root, [#{outcomes := Outs}]} =
+		graphdb_instance:create_instance("car", Owner, 5),
+	?assertEqual(3, length(Outs)),
+	?assertEqual([1, 2, 3], [maps:get(index, O) || O <- Outs]),
+	?assertEqual(["Spare 1", "Spare 2", "Spare 3"],
+				 [maps:get(name, O) || O <- Outs]),
+	?assert(lists:all(fun(O) -> maps:get(status, O) =:= proposed end, Outs)).
+
+%%-----------------------------------------------------------------------------
+%% B3 OI-B3-1: unbounded propose yields exactly ONE proposed outcome with
+%% index=unbounded.
+%%-----------------------------------------------------------------------------
+firing_propose_multiplicity_unbounded(Config) ->
+	{Owner, Bolt} = ?config(ob, Config),
+	{ok, _} = graphdb_rules:create_composition_rule(
+		environment, "OBpropose", Owner, Bolt, propose, unbounded),
+	{ok, _Root, [#{outcomes := Outs}]} =
+		graphdb_instance:create_instance("car", Owner, 5),
+	?assertEqual(1, length(Outs)),
+	[#{index := Idx, status := proposed}] = Outs,
+	?assertEqual(unbounded, Idx).
+
+%%-----------------------------------------------------------------------------
+%% B3 OI-B3-2: a propose rule whose child class is already on the
+%% root->here path is cut — no proposed outcome.  Owner's class proposes
+%% Owner (self), so nothing is surfaced.
+%%-----------------------------------------------------------------------------
+firing_propose_on_path_cut(Config) ->
+	{Owner, _Bolt} = ?config(ob, Config),
+	{ok, _} = graphdb_rules:create_composition_rule(
+		environment, "selfpropose", Owner, Owner, propose, 1),
+	{ok, _Root, Report} = graphdb_instance:create_instance("car", Owner, 5),
+	?assertEqual([], Report).
+
+%%-----------------------------------------------------------------------------
+%% B3: summarize/1 counts proposed outcomes (and the map gains the key).
+%%-----------------------------------------------------------------------------
+firing_propose_summarize(Config) ->
+	{Owner, Bolt} = ?config(ob, Config),
+	{ok, _} = graphdb_rules:create_composition_rule(
+		environment, "OBpropose", Owner, Bolt, propose, 2),
+	{ok, _Root, Report} = graphdb_instance:create_instance("car", Owner, 5),
+	?assertEqual(#{fired => 0, failed => 0, not_attempted => 0, proposed => 2},
+				 graphdb_instance:summarize(Report)).
+
+%%-----------------------------------------------------------------------------
+%% B3: all three modes on one create — mandatory + auto materialise, propose
+%% is surfaced but not materialised.
+%%-----------------------------------------------------------------------------
+firing_propose_with_mandatory_and_auto(Config) ->
+	{Owner, Bolt, Widget} = ?config(obw, Config),
+	%% graphdb_instance_SUITE has no make_class/1 helper — create the third
+	%% class directly (parent nref 3 = Classes category).
+	{ok, Gizmo} = graphdb_class:create_class("Gizmo", 3),
+	{ok, _} = graphdb_rules:create_composition_rule(
+		environment, "man", Owner, Bolt, mandatory, 1),
+	{ok, _} = graphdb_rules:create_composition_rule(
+		environment, "aut", Owner, Widget, auto, 1),
+	{ok, _} = graphdb_rules:create_composition_rule(
+		environment, "pro", Owner, Gizmo, propose, 1),
+	{ok, Root, Report} = graphdb_instance:create_instance("car", Owner, 5),
+	%% two children materialised (mandatory Bolt + auto Widget), Gizmo is not
+	{ok, Kids} = graphdb_instance:children(Root),
+	?assertEqual(2, length(Kids)),
+	?assertEqual(#{fired => 2, failed => 0, not_attempted => 0, proposed => 1},
 				 graphdb_instance:summarize(Report)).
 
 

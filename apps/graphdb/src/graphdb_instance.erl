@@ -479,9 +479,11 @@ fire_create(Name, ClassNref, ParentNref, OnPath) ->
 		{ok, PlanTree} ->
 			case execute(Name, ClassNref, ParentNref, OnPath, PlanTree) of
 				{ok, RootNref, MandOutcomes, InstPlan} ->
-					AutoReport = fire_auto(InstPlan, OnPath),
+					AutoReport    = fire_auto(InstPlan, OnPath),
+					ProposeReport = fire_propose(InstPlan, OnPath),
 					{ok, RootNref,
-					 merge_reports(MandOutcomes, AutoReport)};
+					 merge_reports(merge_reports(MandOutcomes, AutoReport),
+								   ProposeReport)};
 				{error, R, Report} ->
 					{error, R, Report}
 			end;
@@ -669,6 +671,80 @@ fire_auto_children(RuleNode, Deploy, ChildClass, Mult, I, OwnerNref, OnPath1,
 	end,
 	fire_auto_children(RuleNode, Deploy, ChildClass, Mult, I + 1, OwnerNref,
 					   OnPath1, Acc2).
+
+%%-----------------------------------------------------------------------------
+%% fire_propose(InstPlan, OnPath) -> report()
+%%
+%% POST-COMMIT, side-effect-free (B3).  Walks the instantiated plan tree
+%% (root + mandatory descendants) and surfaces each node's propose_rules as
+%% `proposed` outcomes.  Materialises NOTHING — a proposal is a suggestion the
+%% caller may accept by calling create_instance/3 for the proposed_class
+%% itself (which then fires that child's own rules).  Auto children are not in
+%% InstPlan; their propose rules surface via their own do_create_instance
+%% sub-report.  Mirrors fire_auto/2's traversal.
+%%
+%% B3 OI-B3-5 (shallow): no recursion into proposed children — nothing is
+%% created, so there is nothing to recurse into.  A future propose-with-options
+%% feature may supersede this.
+%%-----------------------------------------------------------------------------
+fire_propose(#{nref := Nref, class := Class, propose_rules := Props,
+			   mandatory_children := Kids}, OnPath) ->
+	OnPath1 = [Class | OnPath],
+	Here = lists:foldl(
+		fun({RuleNode, Deploy}, Acc) ->
+			fire_one_propose(RuleNode, Deploy, Nref, OnPath1, Acc)
+		end, [], Props),
+	lists:foldl(
+		fun(Child, Acc) -> merge_reports(Acc, fire_propose(Child, OnPath1)) end,
+		Here, Kids).
+
+%%-----------------------------------------------------------------------------
+%% fire_one_propose(RuleNode, Deploy, OwnerNref, OnPath1, Acc) -> report()
+%%
+%% Emits `proposed` outcome(s) for one propose rule.  No instantiability
+%% guard (B3 design §3.2): a proposal creates nothing, so an abstract target
+%% cannot break anything; the caller validates on accept.
+%%-----------------------------------------------------------------------------
+fire_one_propose(RuleNode, Deploy, OwnerNref, OnPath1, Acc) ->
+	ChildClass = graphdb_rules:rule_child_class(RuleNode),
+	%% B3 OI-B3-2: on-path cycle cut — do not propose a class already on the
+	%% root->here path (mirrors B2-D5).  Supersedable by propose-with-options.
+	case lists:member(ChildClass, OnPath1) of
+		true ->
+			Acc;
+		false ->
+			case maps:get(multiplicity, Deploy, 1) of
+				unbounded ->
+					%% B3 OI-B3-1: unbounded propose => a single proposal with
+					%% index=unbounded; the caller decides cardinality.  Name is
+					%% a representative resolved at index 1.  Supersedable by
+					%% propose-with-options.
+					Name = graphdb_rules:rule_child_name(RuleNode, ChildClass,
+														 1, 1),
+					add_outcome(Acc, RuleNode, Deploy,
+						#{owner => OwnerNref, index => unbounded,
+						  status => proposed, proposed_class => ChildClass,
+						  name => Name});
+				Mult ->
+					propose_children(RuleNode, Deploy, ChildClass, Mult, 1,
+									 OwnerNref, Acc)
+			end
+	end.
+
+%%-----------------------------------------------------------------------------
+%% propose_children(RuleNode, Deploy, ChildClass, Mult, I, OwnerNref, Acc)
+%%   -> report()
+%% Emits one `proposed` outcome per multiplicity index 1..Mult.
+%%-----------------------------------------------------------------------------
+propose_children(_RuleNode, _Deploy, _ChildClass, Mult, I, _OwnerNref, Acc)
+		when I > Mult ->
+	Acc;
+propose_children(RuleNode, Deploy, ChildClass, Mult, I, OwnerNref, Acc) ->
+	Name = graphdb_rules:rule_child_name(RuleNode, ChildClass, I, Mult),
+	Acc1 = add_outcome(Acc, RuleNode, Deploy,
+		#{owner => OwnerNref, index => I, status => proposed,
+		  proposed_class => ChildClass, name => Name}),
+	propose_children(RuleNode, Deploy, ChildClass, Mult, I + 1, OwnerNref, Acc1).
 
 
 %%-----------------------------------------------------------------------------
@@ -1365,10 +1441,11 @@ walk_not_attempted(#{mandatory_children := Kids}, Acc0) ->
 
 
 %%-----------------------------------------------------------------------------
-%% summarize(Report) -> #{fired => N, failed => M, not_attempted => K}
+%% summarize(Report) -> #{fired => N, failed => M, not_attempted => K,
+%%                        proposed => P}
 %%-----------------------------------------------------------------------------
 summarize(Report) ->
 	Outs = [O || #{outcomes := Os} <- Report, O <- Os],
 	Count = fun(S) -> length([1 || #{status := X} <- Outs, X =:= S]) end,
 	#{fired => Count(fired), failed => Count(failed),
-	  not_attempted => Count(not_attempted)}.
+	  not_attempted => Count(not_attempted), proposed => Count(proposed)}.
