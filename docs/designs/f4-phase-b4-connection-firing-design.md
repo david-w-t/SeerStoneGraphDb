@@ -364,10 +364,16 @@ mode, so the label is never misleading):
   is *not* obligated to act.
 - **`proposed`** — a `propose`-mode rule, surfaced for the caller (mirrors
   B3's propose outcomes); nothing connected.
-- **`failed`** — an `auto` connection that errored, or a committed target
-  that failed validation on a non-mandatory rule. Carries `reason`.
-- **`not_attempted`** — planned but rolled back by a sibling mandatory
-  failure (the EXECUTE abort set), mirroring B2-D6.
+- **`failed`** — a connection that could not be made. Two sub-cases:
+  **(a) the mandatory connection rule whose shortfall aborted the create** —
+  the *one* culprit on a rollback (parity with B2-D6, where the mandatory
+  composition culprit is `failed`); or **(b)** on a *surviving* create, an
+  `auto` connection that errored, or a committed target that failed
+  validation on a non-mandatory rule. Carries `reason`.
+- **`not_attempted`** — a rule that planned cleanly but never executed
+  because a **sibling mandatory failure** aborted the create: a
+  mandatory-connection shortfall in RESOLVE, a mandatory-composition
+  shortfall in PLAN, or an EXECUTE transaction abort. Mirrors B2-D6.
 
 Composition and connection outcomes coexist in one report: the `rule` node's
 kind (`CompositionRule` vs `ConnectionRule`) and the outcome's keys
@@ -376,6 +382,30 @@ statuses (`connected` / `required` / `not_connected` / `proposed`) alongside
 the composition ones. Report helpers stay **co-located in `graphdb_instance`** — connection
 firing also runs there, so OI-B2-5's "extract a `graphdb_report` module when
 a second *module* needs the shape" is still not triggered.
+
+**Determining the cause of a rollback.** On any `{error, Reason, Report}` the
+report carries **exactly one `failed` outcome** — the culprit — surrounded by
+`not_attempted` siblings (B2-D6's model, inherited). **The culprit's rule
+kind is the discriminator**, answering "required *instance* not created vs
+required *connection* not made" directly:
+
+- a **`CompositionRule`** culprit (its outcome carries a `child` key) ⇒ a
+  **required instance could not be created**;
+- a **`ConnectionRule`** culprit (its outcome carries `target` /
+  `characterization`) ⇒ a **required connection could not be made**.
+
+The top-level `Reason` corroborates with the specifics —
+`{class_not_instantiable, …}` / `{unbounded_multiplicity_not_fireable, …}` /
+`{child_class_invalid, …}` for composition;
+`{mandatory_connection_unsatisfied, RuleNref}` /
+`{invalid_connection_target, …}` for connection. **Phase ordering guarantees
+the two never co-occur:** a composition shortfall aborts in PLAN *before*
+connection RESOLVE runs, and a connection shortfall aborts in RESOLVE *after*
+composition planned cleanly — so the lone `failed` outcome unambiguously
+names the subsystem. Callers should classify on the **culprit's rule kind**,
+not by pattern-matching the bare `Reason` atom: the reason atoms are not
+namespaced, and `class_not_instantiable` also appears as a pre-plan
+validation reason (2-tuple `{error, Reason}`, no report).
 
 ---
 
@@ -476,8 +506,8 @@ convention are already in place.
 
 | Condition                                                      | Phase         | Result                                                               |
 | ------------------------------------------------------------- | ------------- | ------------------------------------------------------------------- |
-| Committed mandatory rule, valid targets `< K` (or 0/unbounded) | RESOLVE       | `{error, {mandatory_connection_unsatisfied, RuleNref}, Report}` (no write) |
-| Committed target invalid (missing / not instance / wrong class), **mandatory** | RESOLVE | `{error, {invalid_connection_target, …}, Report}` (no write)      |
+| Committed mandatory rule, valid targets `< K` (or 0/unbounded) | RESOLVE       | `{error, {mandatory_connection_unsatisfied, RuleNref}, Report}` (no write); culprit ConnectionRule → `failed`, planned siblings → `not_attempted` |
+| Committed target invalid (missing / not instance / wrong class), **mandatory** | RESOLVE | `{error, {invalid_connection_target, …}, Report}` (no write); culprit ConnectionRule → `failed`, planned siblings → `not_attempted` |
 | Committed target invalid, **auto**                            | RESOLVE→report | `failed` outcome (reason carries the violation); create proceeds    |
 | Mandatory rule, resolver returns `defer`                      | RESOLVE       | `required` outcome; create **succeeds** (the `/3` escape, B4-D4)     |
 | Auto rule, resolver returns `defer`                           | RESOLVE       | `not_connected` outcome; create **succeeds**                        |
@@ -580,6 +610,14 @@ survives.
 - **Mandatory shortfall fails** — resolver commits but supplies an invalid /
   insufficient target for a mandatory rule → `{error, …, Report}`, **zero
   rows written**; report shows the culprit and `not_attempted` siblings.
+- **Rollback cause is discriminable** — given a class carrying *both* a
+  mandatory composition rule and a mandatory connection rule, force each
+  failure independently and assert the lone `failed` outcome's rule kind
+  identifies the cause: composition shortfall ⇒ culprit is a
+  `CompositionRule` (outcome has `child`) and no connection outcome was even
+  produced (RESOLVE never ran); connection shortfall ⇒ culprit is a
+  `ConnectionRule` (outcome has `target`) with the composition outcomes all
+  `not_attempted`.
 - **Auto best-effort** — `auto` rule, resolver commits → connected
   post-commit; an auto target that fails validation is a `failed` outcome
   and the instance survives.
