@@ -663,8 +663,10 @@ learning.
   floor (`mandatory` ⇒ ≥ `Min`); `Max` caps. Touches Phase A
   `create_*_rule` signatures + validation, B1 `decode_deployment`, B2
   `plan_mandatory` / `expand_children`, and the CT suites (greenfield —
-  test churn only). Open semantic to settle in its design: what count B2
-  composition firing *mints* from a range (lean: mint `Min`). Must land
+  test churn only). Composition mint-from-range is **decided**: firing
+  mints `Min` (the floor drives the count); `Max` is the ceiling for a
+  future *interactive creation session* (human or autonomous agent tops up
+  optional children up to `Max`) — a separate later feature. Must land
   before B4 (which consumes `{Min, Max}` deployment). See
   `docs/designs/f4-phase-b4-connection-firing-design.md` §7 and B4-D5.
 - **B4** connection firing (needs B-prep first); **B5** horizontal

@@ -574,13 +574,14 @@ survives.
   `create_connection_rule` multiplicity param + validation), B1
   `decode_deployment`, B2 `plan_mandatory` / `expand_children`, and the
   CT suites. **Breaking** to the rules data model; greenfield, so test
-  churn only. *Open semantic for the refactor's own design:* B2 composition
-  firing currently *mints* an exact count `K`; with a range it must pick a
-  count — the lean is **mint `Min`** (the required floor; preserves today's
-  behaviour when `Min = Max = K`, and makes `{1, unbounded}` mandatory
-  composition simply mint 1 rather than the current
-  `unbounded_multiplicity_not_fireable` error), with `Max` an upper bound
-  enforced on later additions. Confirm before that refactor is planned.
+  churn only. *Composition mint-from-range (DECIDED, David 2026-06-10):* B2
+  composition firing **mints `Min`** — the required floor drives the count
+  of children created. This preserves today's behaviour when `Min = Max =
+  K`, and makes `{1, unbounded}` mandatory composition simply mint 1 rather
+  than the current `unbounded_multiplicity_not_fireable` error. **`Max` is
+  the ceiling for a future *interactive creation session*** (a human user or
+  an autonomous agent may add optional children beyond `Min`, up to `Max`) —
+  a separate, later feature; firing alone only ever mints `Min`.
 
 - **OI-B4-1 (future).** Resolvers expressible **in the ontology** — a
   resolver strategy stored as knowledge rather than supplied as host
