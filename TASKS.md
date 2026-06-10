@@ -654,8 +654,21 @@ learning.
   caller accepts a proposal by issuing an ordinary `create_instance/3`
   for the proposed class. Design:
   `docs/designs/f4-phase-b3-propose-mode-design.md`.
-- **B4** connection firing; **B5** horizontal conflict precedence —
-  OUTSTANDING.
+- **B-prep — multiplicity-range refactor — OUTSTANDING (prerequisite for
+  B4).** Reshape `multiplicity` from `pos_integer() | unbounded` to a
+  `{Min, Max}` pair (`Min :: non_neg_integer()`, `Max :: pos_integer() |
+  unbounded`) across **both** composition and connection rules — uniform
+  rule shape; `unbounded` survives only as a value of `Max`, never
+  standalone, so deployment carries `{Min, Max}`. `mode` enforces the
+  floor (`mandatory` ⇒ ≥ `Min`); `Max` caps. Touches Phase A
+  `create_*_rule` signatures + validation, B1 `decode_deployment`, B2
+  `plan_mandatory` / `expand_children`, and the CT suites (greenfield —
+  test churn only). Open semantic to settle in its design: what count B2
+  composition firing *mints* from a range (lean: mint `Min`). Must land
+  before B4 (which consumes `{Min, Max}` deployment). See
+  `docs/designs/f4-phase-b4-connection-firing-design.md` §7 and B4-D5.
+- **B4** connection firing (needs B-prep first); **B5** horizontal
+  conflict precedence — OUTSTANDING.
 
 **Evidence:** `apps/graphdb/src/graphdb_rules.erl` Phases A+B1+B2+B3 are
 implemented.

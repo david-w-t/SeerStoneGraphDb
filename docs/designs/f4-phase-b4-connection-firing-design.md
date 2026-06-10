@@ -113,7 +113,8 @@ ConnContext :: #{rule           => #node{},               %% the ConnectionRule 
                  reciprocal       => integer(),           %% reverse arc label (content AVP, B4-D3)
                  target_class     => integer(),           %% content AVP
                  mode             => mandatory | auto | propose,
-                 multiplicity     => pos_integer() | unbounded,
+                 multiplicity     => {non_neg_integer(),  %% {Min, Max} cardinality range
+                                      pos_integer() | unbounded}, %%   (B-prep, §7); Max may be unbounded
                  source           => integer(),           %% nref of the instance whose rule fires
                                                           %%   (root OR a composition descendant)
                  root_parent      => integer() | undefined, %% the ParentNref arg to this
@@ -290,19 +291,29 @@ caller can satisfy later via `add_relationship`), and creation **succeeds**.
 Enforcement bites only when a real `/4` resolver **commits**
 (`{connect, List}`) to a mandatory rule and the list falls short.
 
-### B4-D5. Multiplicity is a constraint on the resolver's list; no cascade
+### B4-D5. Multiplicity is a `{Min, Max}` cardinality range; mandatory enforces Min; no cascade
 
-Multiplicity governs the resolver's returned list rather than generating
-firings:
+**Multiplicity is a `{Min, Max}` range, not a single number** — see the
+**B-prep multiplicity-range refactor** (§7), a prerequisite that reshapes
+`multiplicity` across *both* composition and connection rules. `Min ::
+non_neg_integer()` is the required floor; `Max :: pos_integer() | unbounded`
+is the cap. `unbounded` is **only ever** a value of `Max` — it is no longer
+a standalone multiplicity anywhere in deployment.
 
-- **`pos_integer()` K** — at most K connections are written (a **cap**).
-  For a committed **mandatory** rule, the resolver must supply **K** valid
-  targets (parity with composition's "create K"); fewer ⇒ the create fails
-  (B4-D4). For **auto**, up to K valid targets are connected and a shortfall
-  is **not** a failure.
-- **`unbounded`** — no cap; every valid target the resolver returns is
-  connected. A committed **mandatory** `unbounded` rule requires **≥ 1**
-  valid target; **auto** accepts any number including zero.
+The **mode** governs *enforcement of the floor at commit*; the range governs
+the count of the resolver's returned list:
+
+- For a committed **mandatory** rule, validation passes iff the resolver
+  supplies **≥ `Min`** valid targets; fewer ⇒ the create fails (B4-D4).
+- For **auto**, the floor is **not** enforced — falling short of `Min` is a
+  `not_connected` / `failed` outcome, never a create failure.
+- In every case at most **`Max`** connections are written (the cap); valid
+  targets beyond `Max` are dropped (truncated to `Max`).
+
+This subsumes the old four-case table uniformly, and the common connection
+cardinalities express directly: `made_by` = `{1, 1}` (exactly one),
+`sold_by` = `{1, unbounded}` (at least one, no cap), optional = `{0, K}` or
+`{0, unbounded}`.
 
 Because connecting to an existing instance creates nothing, connection
 firing **does not recurse** and needs **no cycle guard**. It is a single
@@ -460,13 +471,13 @@ resolve_connections(Scope, InstNode, SourceNref, RootParent, RootSource, Resolve
                                                auto      -> not_connected;
                                                propose   -> proposed)
             {connect, List} ->
-                Valid = [ T || T <- List, validate_target(T, TClass, SourceNref) ]   %% B4-D6
-                case {Dep.mode, length(Valid), Dep.multiplicity} of
-                    {mandatory, N, K}  when is_integer(K), N <  K -> FAIL create
-                    {mandatory, 0, unbounded}                     -> FAIL create
-                    _                                             -> ok
+                Valid       = [ T || T <- List, validate_target(T, TClass, SourceNref) ]  %% B4-D6
+                {Min, Max}  = Dep.multiplicity                          %% B4-D5, {Min,Max}
+                case Dep.mode of
+                    mandatory when length(Valid) < Min -> FAIL create   %% floor unmet
+                    _                                  -> ok
                 end,
-                ToWrite = cap(Valid, Dep.multiplicity),
+                ToWrite = cap(Valid, Max),                             %% truncate to at most Max
                 record planned connections (mandatory -> EXECUTE txn;
                                             auto       -> POST-COMMIT)
 ```
@@ -506,7 +517,7 @@ convention are already in place.
 
 | Condition                                                      | Phase         | Result                                                               |
 | ------------------------------------------------------------- | ------------- | ------------------------------------------------------------------- |
-| Committed mandatory rule, valid targets `< K` (or 0/unbounded) | RESOLVE       | `{error, {mandatory_connection_unsatisfied, RuleNref}, Report}` (no write); culprit ConnectionRule → `failed`, planned siblings → `not_attempted` |
+| Committed mandatory rule, valid targets `< Min`               | RESOLVE       | `{error, {mandatory_connection_unsatisfied, RuleNref}, Report}` (no write); culprit ConnectionRule → `failed`, planned siblings → `not_attempted` |
 | Committed target invalid (missing / not instance / wrong class), **mandatory** | RESOLVE | `{error, {invalid_connection_target, …}, Report}` (no write); culprit ConnectionRule → `failed`, planned siblings → `not_attempted` |
 | Committed target invalid, **auto**                            | RESOLVE→report | `failed` outcome (reason carries the violation); create proceeds    |
 | Mandatory rule, resolver returns `defer`                      | RESOLVE       | `required` outcome; create **succeeds** (the `/3` escape, B4-D4)     |
@@ -545,13 +556,31 @@ survives.
 | B4-D2a | `ConnContext` carries stable originating-call anchors `root_parent` (the committed, readable `ParentNref` arg) and `root_source` (top-level new-instance nref), threaded **unchanged** down the cascade so a descendant's resolver still sees the original call's context, not the descendant's immediate parent. |
 | B4-D3 | Reciprocal is **ConnectionRule content** (`reciprocal_nref` AVP); `create_connection_rule/8,/9` gain the param (breaking vs Phase A `/7,/8`). |
 | B4-D4 | Firing wires into B2's PLAN/EXECUTE/POST-COMMIT; **committed** mandatory connections enforce in the root txn; `defer` never fails (the `/3` escape). |
-| B4-D5 | Multiplicity = constraint on the resolver's list (cap for `pos_int`, none for `unbounded`); **no cascade, no cycle guard**.             |
+| B4-D5 | Multiplicity = `{Min, Max}` cardinality range (`Max :: pos_int \| unbounded`); committed **mandatory** passes iff `#valid ≥ Min`, capped at `Max`; **no cascade, no cycle guard**. Depends on the B-prep multiplicity-range refactor (§7). |
 | B4-D6 | Target validation: exists, `kind=instance`, instance-of `target_class`-or-subclass, not self.                                            |
 | B4-D7 | Connection outcomes reuse B2's rule-centric `report()`; statuses `connected`/`required`/`not_connected`/`proposed`/`failed`/`not_attempted` (deferred status maps one-to-one onto mode); `summarize/1` extended. |
 
 ---
 
 ## 7. Open Issues (carried, not resolved here)
+
+- **B-prep — multiplicity-range refactor (PREREQUISITE, lands before B4).**
+  `multiplicity` is reshaped from `pos_integer() | unbounded` to a
+  `{Min, Max}` pair (`Min :: non_neg_integer()`, `Max :: pos_integer() |
+  unbounded`) across **both** composition and connection rules — same shape
+  for every rule kind (David, 2026-06-10). `unbounded` survives only as a
+  value of `Max`, never standalone, so deployment carries `{Min, Max}` and
+  no bare `unbounded`. Touches Phase A (`create_composition_rule` /
+  `create_connection_rule` multiplicity param + validation), B1
+  `decode_deployment`, B2 `plan_mandatory` / `expand_children`, and the
+  CT suites. **Breaking** to the rules data model; greenfield, so test
+  churn only. *Open semantic for the refactor's own design:* B2 composition
+  firing currently *mints* an exact count `K`; with a range it must pick a
+  count — the lean is **mint `Min`** (the required floor; preserves today's
+  behaviour when `Min = Max = K`, and makes `{1, unbounded}` mandatory
+  composition simply mint 1 rather than the current
+  `unbounded_multiplicity_not_fireable` error), with `Max` an upper bound
+  enforced on later additions. Confirm before that refactor is planned.
 
 - **OI-B4-1 (future).** Resolvers expressible **in the ontology** — a
   resolver strategy stored as knowledge rather than supplied as host
@@ -623,8 +652,10 @@ survives.
   and the instance survives.
 - **`propose` connection** — `propose`-mode rule → `proposed` outcome,
   nothing connected.
-- **Multiplicity** — `mult=K` mandatory needs K valid targets (K-1 fails);
-  `unbounded` connects all returned; `auto` shortfall tolerated.
+- **Multiplicity** — `{Min, Max}` mandatory needs ≥ `Min` valid targets
+  (`Min-1` fails); writes are capped at `Max` (extras truncated);
+  `{1, unbounded}` connects all returned; `auto` shortfall below `Min`
+  tolerated.
 - **Validation** — missing target / non-instance / wrong target_class
   rejected; subclass-of-target_class accepted.
 - **Reciprocal content** — `create_connection_rule/8` stores
