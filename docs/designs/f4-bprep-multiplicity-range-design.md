@@ -49,11 +49,13 @@ only references this shape.
   only as a value of `Max`**; it is no longer a standalone multiplicity
   anywhere in deployment.
 - **Creation** firing **materialises `Min`** (mandatory mints `Min` in the
-  root transaction, auto mints `Min` post-commit) — **decided** (David). For
-  **propose** (which surfaces, does not create), the count is an **open
-  fork** — see BP-D2 and BP-OI-2.
-- `Max` is recorded but not consumed by creation firing — it is the ceiling
-  reserved for the future interactive-creation feature (§1.3).
+  root transaction, auto mints `Min` post-commit). **Propose** surfaces
+  `Min` `proposed` outcomes, **each carrying `max => Max`** so the report
+  keeps the open-ended ceiling for the interactive / autonomous-agent
+  session (BP-D2, David's choice (b)).
+- `Max` is recorded but not consumed by creation firing (it *is* surfaced on
+  propose outcomes) — it is the ceiling for the future interactive-creation
+  feature (§1.3).
 - The `unbounded`-driven dead-end on the **creation** paths is retired:
   `Min` is always finite, so every rule is fireable (BP-D3).
 
@@ -98,11 +100,11 @@ Common cardinalities express directly:
 | optional, up to K    | `{0, K}`         |
 | optional, any number | `{0, unbounded}` |
 
-### BP-D2. Creation firing materialises `Min`; `Max` is the interactive-session ceiling; propose count is an open fork
+### BP-D2. Creation firing materialises `Min`; propose surfaces `Min` carrying `Max`; `Max` is the interactive-session ceiling
 
 **Creation** firing — the paths that actually materialise nodes — is driven
-by `Min` (**decided**, David: "minimum drives the count for compositional
-children to create"):
+by `Min` (David: "minimum drives the count for compositional children to
+create"):
 
 - **mandatory composition** — mint `Min` children in the root transaction
   (`graphdb_rules` PLAN, §3.4).
@@ -110,7 +112,20 @@ children to create"):
   (`graphdb_instance:fire_auto`, §3.5).
 - **connection firing (B4, future)** — `mandatory` passes iff the resolver
   supplies ≥ `Min` valid targets; writes are capped at `Max` (B4-D5). The
-  resolver-list cap is the **only** place `Max` constrains firing today.
+  resolver-list cap is the **only** place `Max` constrains creation firing.
+
+**Propose** surfaces — it does not create — and uses `Min` **and** `Max`
+(David's choice (b), BP-OI-2 resolved): `fire_propose` emits `Min`
+`proposed` outcomes, **each carrying a `max => Max` key** (`Max = unbounded`
+retaining the open-ended meaning). This keeps the report — the
+always-in-report signal an **autonomous agent** reads — aware of the
+ceiling, which is exactly what the interactive-creation session `Max` exists
+for. It **generalises** the B3 `index => unbounded` decision (OI-B3-1)
+rather than retiring it: instead of one sentinel outcome, propose emits
+ordinary indexed outcomes that *carry* the open-ended ceiling. (Migration
+maps the old `unbounded` propose to `{1, unbounded}` so at least one outcome
+is surfaced; a `{0, Max}` propose surfaces nothing by default — a deliberate
+new capability for the interactive layer, BP-OI-1.)
 
 `Max` is otherwise **recorded, not fired** on the creation paths: it is the
 ceiling for the future interactive-creation feature (BP-OI-1), where a user
@@ -118,29 +133,6 @@ or autonomous agent may add children/connections beyond `Min`, up to `Max`.
 This preserves today's composition behaviour exactly under the `K → {K, K}`
 migration (`Min = Max = K` ⇒ mint K), while making `{Min, unbounded}` simply
 mint `Min`.
-
-**OPEN FORK — propose count (BP-OI-2; needs David before implementation).**
-Propose *surfaces*, it does not create, so David's "count for children to
-create" does not settle it, and it touches a B3 decision he made on purpose
-(OI-B3-1: an `unbounded` propose emits a single `index => unbounded`
-outcome, "caller decides cardinality"). Two coherent choices:
-
-- **(a) Minimal** — propose surfaces `Min` discrete `proposed` outcomes and
-  the `index => unbounded` case is retired (uniform with the creation
-  paths). Simple, but `{Min, unbounded}` propose collapses to `Min`
-  outcomes and the "you may add more, up to `Max`" signal is dropped from
-  the report.
-- **(b) Preserve the open-ended signal (leaning recommendation)** — propose
-  surfaces `Min` outcomes **and carries `Max`** (e.g. a `max => Max` key on
-  the `proposed` outcome, with `Max = unbounded` retaining today's
-  open-ended meaning). This keeps the report — the always-in-report signal
-  an **autonomous agent** reads — aware of the ceiling, which is exactly the
-  interactive-creation session `Max` exists for. Costs one optional outcome
-  key; does not retire OI-B3-1's intent, it generalises it.
-
-This doc *defaults its prose to (a)* only as a placeholder; the firing-path
-edits in §3.6 are written so either choice is a small change. **Pick before
-the plan is written.**
 
 ### BP-D3. `unbounded`-driven dead-ends are retired
 
@@ -151,10 +143,11 @@ can always fire (it mints `Min`, possibly 0). Therefore:
   occurs today: the PLAN-stage abort in `graphdb_rules` (mandatory) and the
   `failed`-outcome in `graphdb_instance:fire_one_auto` (auto). `{Min,
   unbounded}` mandatory/auto composition now mints `Min`. **(Decided.)**
-- The B3 propose `index => unbounded` special case (OI-B3-1) is **subject to
-  the BP-OI-2 fork**, not unilaterally removed. Under choice (a) it is
-  retired; under choice (b) it is generalised (the outcome carries `Max =
-  unbounded`). Pending David's pick.
+- The B3 propose `index => unbounded` special case (OI-B3-1) is
+  **generalised, not retired** (BP-OI-2 choice (b)): propose emits ordinary
+  indexed `proposed` outcomes that each carry `max => Max`, with `Max =
+  unbounded` conveying the open-ended ceiling instead of the `index =>
+  unbounded` sentinel.
 
 ### BP-D4. Validation: shape + `Min ≤ Max` + `Max ≥ 1`
 
@@ -251,16 +244,12 @@ clause and its `failed` outcome are **deleted** (BP-D3).
 
 ### 3.6 B3 propose — `graphdb_instance:fire_one_propose/5` + `propose_children/7`
 
-`fire_one_propose` reads `{Min, Max}`. Per the **BP-OI-2 fork**:
-
-- **(a)** `propose_children` emits **`Min`** `proposed` outcomes (loop bound
-  `Mult` becomes `Min`); the `index => unbounded` branch is deleted.
-- **(b)** `propose_children` emits **`Min`** `proposed` outcomes, each (or a
-  single range outcome) carrying `max => Max`; `Max = unbounded` preserves
-  today's open-ended meaning instead of the `index => unbounded` sentinel.
-
-Either way the loop bound becomes `Min`; the only difference is whether the
-outcome carries `Max`. Settle BP-OI-2 before this step is planned.
+`fire_one_propose` reads `{Min, Max}`; `propose_children` emits **`Min`**
+`proposed` outcomes (loop bound `Mult` becomes `Min`), **each carrying a
+`max => Max` key** (BP-D2, choice (b)). The `index => unbounded` branch is
+deleted — an open-ended propose is now `{1, unbounded}` ⇒ one outcome with
+`max => unbounded`. The `proposed` outcome shape gains the optional `max`
+key; existing keys are unchanged.
 
 ### 3.7 Child naming — `graphdb_rules:rule_child_name/4`
 
@@ -292,7 +281,7 @@ paths. Signature unchanged; callers pass `Min` where they passed `Mult`.
 | `apps/graphdb/src/graphdb_rules.erl`                                | `validate_multiplicity/1` rewrite (BP-D4); deployment AVP value → `{Min, Max}` (§3.2); `plan_mandatory`/`expand_children` use `Min`, drop `unbounded` branch (§3.4); `rule_child_name/4` count → `Min` (§3.7); `decode_deployment/2` doc comment                                                                 |
 | `apps/graphdb/src/graphdb_instance.erl`                             | `fire_one_auto`/`fire_auto_children` use `Min`, drop `unbounded` branch (§3.5); `fire_one_propose`/`propose_children` use `Min`, drop `index=unbounded` branch (§3.6)                                                                                                                                            |
 | `apps/graphdb/test/graphdb_rules_SUITE.erl`                         | migrate every multiplicity **authoring arg** AND every **assertion on the decoded deployment map** (`effective_rules_for_class/2` round-trips: `multiplicity => K` → `{Min, Max}`) to `{Min, Max}` (BP-D6); rewrite the `unbounded_multiplicity_not_fireable` mandatory cases; add `{Min, Max}` validation cases |
-| `apps/graphdb/test/graphdb_instance_SUITE.erl`                      | migrate firing cases to `{Min, Max}` (authoring args + any `deployment`/report assertions); rewrite the auto `unbounded_multiplicity_not_fireable` case; resolve the propose `index=unbounded` case per the BP-OI-2 fork                                                                                         |
+| `apps/graphdb/test/graphdb_instance_SUITE.erl`                      | migrate firing cases to `{Min, Max}` (authoring args + any `deployment`/report assertions); rewrite the auto `unbounded_multiplicity_not_fireable` case; rewrite the propose `index=unbounded` case → `Min` outcomes carrying `max => Max` (BP-D2 (b))                                                           |
 | `apps/graphdb/src/graphdb_rules.erl` doc / `apps/graphdb/CLAUDE.md` | note `multiplicity` deployment value is `{Min, Max}`; `create_*_rule` multiplicity param type                                                                                                                                                                                                                    |
 | `docs/designs/f4-graphdb-rules-design.md`                           | record the `{Min, Max}` shape (D5 deployment AVPs) and the retirement of `unbounded_multiplicity_not_fireable` / propose `index=unbounded`                                                                                                                                                                       |
 | `README.md` / test-count tables                                     | CT count shift (validation cases added, special-case tests rewritten)                                                                                                                                                                                                                                            |
@@ -304,14 +293,14 @@ No change to `apps/graphdb/priv/bootstrap.terms`,
 
 ## 6. Decision Log
 
-| ID    | Decision                                                                                                                                                                                             |
-| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| BP-D1 | `multiplicity :: {Min, Max}` across **both** rule kinds; `Min` non-neg floor, `Max` `pos_int \| unbounded` cap; `unbounded` only as `Max`.                                                           |
-| BP-D2 | Firing materialises **`Min`** (mandatory mint, auto mint, propose surface); `Max` recorded, not fired — the future interactive-session ceiling.                                                      |
-| BP-D3 | Retire `unbounded_multiplicity_not_fireable` (PLAN + auto) — `Min` is always finite, so every creation rule fires. The propose `index => unbounded` case follows the BP-OI-2 fork, not retired here. |
-| BP-D4 | `validate_multiplicity/1` accepts `{Min, Max}` with `Min ≥ 0`, `Max ≥ 1` (or `unbounded`), `Max ≥ Min`; else `invalid_multiplicity`. `mandatory` + `Min = 0` permissive.                             |
-| BP-D5 | No new seed/literal/ontology-tree change; `decode_deployment` carries the tuple transparently; `create_*_rule` arities unchanged (param **type** only).                                              |
-| BP-D6 | Greenfield hard cutover; call sites migrate by the mode-preserving mapping table (`K → {K, K}`, etc.).                                                                                               |
+| ID    | Decision                                                                                                                                                                                                                                  |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| BP-D1 | `multiplicity :: {Min, Max}` across **both** rule kinds; `Min` non-neg floor, `Max` `pos_int \| unbounded` cap; `unbounded` only as `Max`.                                                                                                |
+| BP-D2 | Creation firing materialises **`Min`** (mandatory mint, auto mint); **propose** surfaces `Min` outcomes **carrying `max => Max`** (choice (b)); `Max` is otherwise the future interactive-session ceiling.                                |
+| BP-D3 | Retire `unbounded_multiplicity_not_fireable` (PLAN + auto) — `Min` is always finite, so every creation rule fires. The propose `index => unbounded` sentinel is **generalised** (outcomes carry `max => Max`), not retired (BP-OI-2 (b)). |
+| BP-D4 | `validate_multiplicity/1` accepts `{Min, Max}` with `Min ≥ 0`, `Max ≥ 1` (or `unbounded`), `Max ≥ Min`; else `invalid_multiplicity`. `mandatory` + `Min = 0` permissive.                                                                  |
+| BP-D5 | No new seed/literal/ontology-tree change; `decode_deployment` carries the tuple transparently; `create_*_rule` arities unchanged (param **type** only).                                                                                   |
+| BP-D6 | Greenfield hard cutover; call sites migrate by the mode-preserving mapping table (`K → {K, K}`, etc.).                                                                                                                                    |
 
 ---
 
@@ -322,14 +311,10 @@ No change to `apps/graphdb/priv/bootstrap.terms`,
   B4, connections) beyond `Min`, up to `Max`. B-prep only stores `Max`;
   this is where it earns its keep. Likely pairs with B3 propose (the
   always-in-report signal an agent would read) and B4's resolver.
-- **BP-OI-2 (DECISION NEEDED before the plan is written).** Propose count
-  under a range — the one point beyond David's stated directive, and it
-  overturns/uses a deliberate B3 decision (OI-B3-1). **(a)** surface `Min`
-  discrete outcomes, retire `index => unbounded`; or **(b)** surface `Min`
-  outcomes carrying `max => Max` so the report keeps the open-ended ceiling
-  for the autonomous-agent / interactive session (leaning recommendation,
-  since that is what `Max` is for). See BP-D2 / §3.6. Not a follow-up — a
-  gate on the propose firing-path edit.
+- **BP-OI-2 — RESOLVED (David, choice (b)).** Propose surfaces `Min`
+  `proposed` outcomes each carrying `max => Max`; the B3 `index => unbounded`
+  sentinel is generalised, not retired. Kept in the open-issues list as a
+  resolved record; the live spec is BP-D2 / §3.6.
 - **BP-OI-3 (validation hardening).** Optionally reject `mandatory` +
   `Min = 0` as a contradiction (a mandatory rule that requires nothing).
   Left permissive for now (BP-D4); revisit if it causes confusion.
@@ -351,12 +336,10 @@ No change to `apps/graphdb/priv/bootstrap.terms`,
   none; `{1, unbounded}` mints one (no `unbounded_multiplicity_not_fireable`).
 - **Auto mint = Min** — `auto` `{2, 5}` mints two post-commit; `{0, unbounded}`
   mints none and does not fail.
-- **Propose surface = Min** — `propose` `{3, 5}` surfaces three `proposed`
-  outcomes. The `{1, unbounded}` case depends on the BP-OI-2 fork: (a) one
-  outcome, no `index=unbounded`; or (b) one outcome carrying `max =>
-  unbounded`.
-- **Retirement** — assert no creation path produces
-  `unbounded_multiplicity_not_fireable` anymore. (The propose
-  `index=unbounded` outcome's fate follows BP-OI-2.)
+- **Propose surface = Min carrying Max** — `propose` `{3, 5}` surfaces three
+  `proposed` outcomes, each with `max => 5`; `{1, unbounded}` surfaces one
+  outcome with `max => unbounded` (no `index=unbounded` sentinel).
+- **Retirement** — assert no path produces `unbounded_multiplicity_not_fireable`
+  and no `proposed` outcome uses the `index => unbounded` sentinel anymore.
 - **Behaviour preservation** — the migrated `{K, K}` cases reproduce the
   pre-refactor child counts and report shapes.
