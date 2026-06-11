@@ -164,7 +164,10 @@
 	firing_conn_mandatory_caps_at_max/1,
 	firing_conn_rollback_discriminable_composition/1,
 	firing_conn_rollback_discriminable_connection/1,
-	firing_conn_descendant_in_root_txn/1
+	firing_conn_descendant_in_root_txn/1,
+	%% B4 auto connection post-commit
+	firing_conn_auto_connected/1,
+	firing_conn_auto_invalid_survives/1
 ]).
 
 
@@ -289,7 +292,9 @@ groups() ->
 			firing_conn_mandatory_caps_at_max,
 			firing_conn_rollback_discriminable_composition,
 			firing_conn_rollback_discriminable_connection,
-			firing_conn_descendant_in_root_txn
+			firing_conn_descendant_in_root_txn,
+			firing_conn_auto_connected,
+			firing_conn_auto_invalid_survives
 		]}
 	].
 
@@ -1998,6 +2003,35 @@ firing_conn_descendant_in_root_txn(_Config) ->
 					  #{status := connected} = O <- Os],
 	[C] = Connected,
 	?assertEqual(BoltNref, maps:get(source, C)).
+
+
+%%=============================================================================
+%% B4 Auto Connection Post-Commit Tests
+%%=============================================================================
+
+%% auto + committing resolver: target connected post-commit; root survives.
+firing_conn_auto_connected(_Config) ->
+	{Src, Tgt, Char, Recip} = b4_conn_classes("Car", "Mfr", "made_by", "makes"),
+	{ok, _} = graphdb_rules:create_connection_rule(
+		environment, "car-made-by", Src, Char, Recip, Tgt, auto, {1, 1}),
+	Target = b4_target_instance("acme", Tgt),
+	R = fun(_Ctx) -> {connect, [Target]} end,
+	{ok, Root, Report} = graphdb_instance:create_instance("car1", Src, 5, R),
+	?assertEqual([Target], b4_conn_targets(Root, Char)),
+	?assertEqual(connected, maps:get(status, b4_single_outcome(Report))).
+
+%% auto + invalid target: survives as a failed outcome; root still created.
+firing_conn_auto_invalid_survives(_Config) ->
+	{Src, Tgt, Char, Recip} = b4_conn_classes("Car", "Mfr", "made_by", "makes"),
+	{ok, _} = graphdb_rules:create_connection_rule(
+		environment, "car-made-by", Src, Char, Recip, Tgt, auto, {1, 1}),
+	{ok, Other} = graphdb_class:create_class("Other", 3),
+	Wrong = b4_target_instance("wrong", Other),
+	R = fun(_Ctx) -> {connect, [Wrong]} end,
+	{ok, Root, Report} = graphdb_instance:create_instance("car1", Src, 5, R),
+	?assert(is_integer(Root)),
+	?assertEqual([], b4_conn_targets(Root, Char)),
+	?assertEqual(failed, maps:get(status, b4_single_outcome(Report))).
 
 
 %%=============================================================================

@@ -673,7 +673,41 @@ connect_targets(mandatory, List, Rule, Deploy, Spec, SourceNref, Rest, Ctx,
 					resolve_rules(Rest, SourceNref, Ctx,
 								  {Rows ++ NewRows, Auto, Rep1})
 			end
-	end.
+	end;
+
+connect_targets(auto, List, Rule, Deploy, Spec, SourceNref, Rest, Ctx,
+		{Rows, Auto, Rep}) ->
+	TClass = maps:get(target_class, Spec),
+	{Valid, Invalid} = split_valid(List, TClass, SourceNref),
+	%% auto does NOT enforce the floor (B4-D5) -- Min is ignored; only Max caps.
+	{_Min, Max} = maps:get(multiplicity, Deploy, {1, 1}),
+	ToConnect = cap(Valid, Max),
+	Char = maps:get(characterization, Spec),
+	%% invalid targets are immediate `failed` outcomes (create survives)
+	Rep1 = lists:foldl(
+		fun({_T, Reason}, R) ->
+			add_outcome(R, Rule, Deploy,
+				#{source => SourceNref, index => 1, status => failed,
+				  reason => Reason, characterization => Char,
+				  target_class => TClass})
+		end, Rep, Invalid),
+	%% valid targets are queued for the post-commit writer
+	AutoEntry = #{rule => Rule, deploy => Deploy, spec => Spec,
+				  source => SourceNref, template => maps:get(template, Deploy),
+				  targets => ToConnect},
+	resolve_rules(Rest, SourceNref, Ctx, {Rows, Auto ++ [AutoEntry], Rep1}).
+
+%% split_valid(List, TClass, SourceNref) ->
+%%     {Valid :: [Target], Invalid :: [{Target, Reason}]}
+%% For AUTO: partition rather than abort -- invalids are reported, valids written.
+split_valid(List, TClass, SourceNref) ->
+	lists:foldr(
+		fun(T, {Vs, Is}) ->
+			case validate_target(T, TClass, SourceNref) of
+				ok              -> {[T | Vs], Is};
+				{error, Reason} -> {Vs, [{T, Reason} | Is]}
+			end
+		end, {[], []}, List).
 
 %% partition_targets(List, TargetClass, SourceNref) -> {ok, [Target]} | {error, R}
 %% For a MANDATORY rule: the first invalid target aborts with its reason; an
@@ -784,11 +818,38 @@ add_conn_outcome({Rows, Auto, Rep}, Rule, Deploy, Outcome) ->
 %%-----------------------------------------------------------------------------
 %% fire_connections(AutoConnPlan) -> report()
 %%
-%% POST-COMMIT best-effort writer for `auto` connections (B4).  Empty until a
-%% later B4 task; an empty plan yields an empty report.
+%% POST-COMMIT best-effort writer for `auto` connections (B4).  Writes each
+%% queued auto connection in its own transaction; a successful write is a
+%% `connected` outcome, a write failure is a `failed` outcome that never rolls
+%% the instance back (B4-D4/D7).  An empty plan yields an empty report.
 %%-----------------------------------------------------------------------------
-fire_connections([]) ->
-	[].
+fire_connections(AutoConnPlan) ->
+	lists:foldl(fun fire_auto_connection/2, [], AutoConnPlan).
+
+%% fire_auto_connection(AutoEntry, Acc) -> report()
+fire_auto_connection(#{rule := Rule, deploy := Deploy, spec := Spec,
+					   source := SourceNref, template := Template,
+					   targets := Targets}, Acc) ->
+	Char   = maps:get(characterization, Spec),
+	Recip  = maps:get(reciprocal, Spec),
+	TClass = maps:get(target_class, Spec),
+	{_I, Acc1} = lists:foldl(
+		fun(T, {I, A}) ->
+			TNref = target_nref(T),
+			Outcome = case write_connection_arcs(SourceNref, Char, TNref, Recip,
+												 Template, target_avps(T)) of
+				ok ->
+					#{source => SourceNref, index => I, status => connected,
+					  target => TNref, characterization => Char,
+					  target_class => TClass};
+				{error, Reason} ->
+					#{source => SourceNref, index => I, status => failed,
+					  reason => Reason, characterization => Char,
+					  target_class => TClass}
+			end,
+			{I + 1, add_outcome(A, Rule, Deploy, Outcome)}
+		end, {1, Acc}, Targets),
+	Acc1.
 
 %%-----------------------------------------------------------------------------
 %% allocate_plan(PlanNode) -> InstPlanNode (same tree + nref per node)
