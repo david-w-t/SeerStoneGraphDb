@@ -143,6 +143,8 @@
 	firing_propose_summarize/1,
 	firing_propose_with_mandatory_and_auto/1,
 	firing_propose_owner_is_materialised_child/1,
+	firing_propose_carries_max/1,
+	firing_propose_min_zero_surfaces_none/1,
 	%% B-prep mint-Min (BP-D2/BP-D3)
 	firing_mandatory_mints_min/1,
 	firing_mandatory_min_zero_mints_none/1,
@@ -259,7 +261,9 @@ groups() ->
 			firing_propose_on_path_cut,
 			firing_propose_summarize,
 			firing_propose_with_mandatory_and_auto,
-			firing_propose_owner_is_materialised_child
+			firing_propose_owner_is_materialised_child,
+			firing_propose_carries_max,
+			firing_propose_min_zero_surfaces_none
 		]}
 	].
 
@@ -327,6 +331,8 @@ setup_firing_fixtures(TC, Config) ->
 				   firing_propose_summarize,
 				   firing_propose_with_mandatory_and_auto,
 				   firing_propose_owner_is_materialised_child,
+				   firing_propose_carries_max,
+				   firing_propose_min_zero_surfaces_none,
 				   firing_mandatory_mints_min,
 				   firing_mandatory_min_zero_mints_none,
 				   firing_mandatory_min_unbounded_mints_min,
@@ -1594,6 +1600,33 @@ firing_propose_owner_is_materialised_child(Config) ->
 	?assertEqual(BoltNref, maps:get(owner, PO)),
 	?assertNotEqual(Root, maps:get(owner, PO)).
 
+
+%%-----------------------------------------------------------------------------
+%% B-prep BP-D2(b): propose {3, 5} surfaces 3 outcomes, each carrying max => 5.
+%%-----------------------------------------------------------------------------
+firing_propose_carries_max(Config) ->
+	{Owner, Bolt} = ?config(ob, Config),
+	{ok, _} = graphdb_rules:create_composition_rule(
+		environment, "OBp3-5", Owner, Bolt, propose, {3, 5}),
+	{ok, _Root, [#{outcomes := Outs}]} =
+		graphdb_instance:create_instance("car", Owner, 5),
+	?assertEqual(3, length(Outs)),
+	?assertEqual([1, 2, 3], [maps:get(index, O) || O <- Outs]),
+	?assert(lists:all(fun(O) -> maps:get(max, O) =:= 5 end, Outs)),
+	?assert(lists:all(fun(O) -> maps:get(status, O) =:= proposed end, Outs)),
+	%% no index=unbounded sentinel survives
+	?assertEqual([], [O || O <- Outs, maps:get(index, O) =:= unbounded]).
+
+%%-----------------------------------------------------------------------------
+%% B-prep: {0, K} propose surfaces nothing by default (Min = 0); the ceiling K
+%% is for the future interactive-creation session (BP-OI-1).
+%%-----------------------------------------------------------------------------
+firing_propose_min_zero_surfaces_none(Config) ->
+	{Owner, Bolt} = ?config(ob, Config),
+	{ok, _} = graphdb_rules:create_composition_rule(
+		environment, "OBp0-3", Owner, Bolt, propose, {0, 3}),
+	{ok, _Root, Report} = graphdb_instance:create_instance("car", Owner, 5),
+	?assertEqual(0, maps:get(proposed, graphdb_instance:summarize(Report))).
 
 %%-----------------------------------------------------------------------------
 %% B-prep BP-D2: mandatory composition mints Min children.
