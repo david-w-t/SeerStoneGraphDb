@@ -142,7 +142,13 @@
 	firing_propose_on_path_cut/1,
 	firing_propose_summarize/1,
 	firing_propose_with_mandatory_and_auto/1,
-	firing_propose_owner_is_materialised_child/1
+	firing_propose_owner_is_materialised_child/1,
+	%% B-prep mint-Min (BP-D2/BP-D3)
+	firing_mandatory_mints_min/1,
+	firing_mandatory_min_zero_mints_none/1,
+	firing_mandatory_min_unbounded_mints_min/1,
+	firing_auto_mints_min/1,
+	firing_auto_min_zero_unbounded/1
 ]).
 
 
@@ -238,9 +244,14 @@ groups() ->
 			firing_mandatory_mult,
 			firing_mandatory_cascade_atomic,
 			firing_mandatory_failure_rolls_back,
+			firing_mandatory_mints_min,
+			firing_mandatory_min_zero_mints_none,
+			firing_mandatory_min_unbounded_mints_min,
 			firing_auto_best_effort,
 			firing_auto_failure_survives,
 			firing_auto_cascade_merges,
+			firing_auto_mints_min,
+			firing_auto_min_zero_unbounded,
 			firing_propose_outcome_in_report,
 			firing_propose_not_materialised,
 			firing_propose_multiplicity_bounded,
@@ -315,7 +326,12 @@ setup_firing_fixtures(TC, Config) ->
 				   firing_propose_on_path_cut,
 				   firing_propose_summarize,
 				   firing_propose_with_mandatory_and_auto,
-				   firing_propose_owner_is_materialised_child],
+				   firing_propose_owner_is_materialised_child,
+				   firing_mandatory_mints_min,
+				   firing_mandatory_min_zero_mints_none,
+				   firing_mandatory_min_unbounded_mints_min,
+				   firing_auto_mints_min,
+				   firing_auto_min_zero_unbounded],
 	case lists:member(TC, FiringTests) of
 		true ->
 			{ok, #{instantiable := InstAttr}} = graphdb_attr:seeded_nrefs(),
@@ -1577,6 +1593,72 @@ firing_propose_owner_is_materialised_child(Config) ->
 	%% owner is the materialised Bolt child, NOT the root
 	?assertEqual(BoltNref, maps:get(owner, PO)),
 	?assertNotEqual(Root, maps:get(owner, PO)).
+
+
+%%-----------------------------------------------------------------------------
+%% B-prep BP-D2: mandatory composition mints Min children.
+%%-----------------------------------------------------------------------------
+firing_mandatory_mints_min(Config) ->
+	{Owner, Bolt} = ?config(ob, Config),
+	{ok, _} = graphdb_rules:create_composition_rule(
+		environment, "OB2-5", Owner, Bolt, mandatory, {2, 5}),
+	{ok, _Root, [#{outcomes := Outs}]} =
+		graphdb_instance:create_instance("car", Owner, 5),
+	Fired = [O || O <- Outs, maps:get(status, O) =:= fired],
+	?assertEqual(2, length(Fired)),
+	?assertEqual([1, 2], [maps:get(index, O) || O <- Fired]).
+
+%%-----------------------------------------------------------------------------
+%% B-prep: {0, K} mandatory mints nothing (vacuous) and does not fail.
+%%-----------------------------------------------------------------------------
+firing_mandatory_min_zero_mints_none(Config) ->
+	{Owner, Bolt} = ?config(ob, Config),
+	{ok, _} = graphdb_rules:create_composition_rule(
+		environment, "OB0-3", Owner, Bolt, mandatory, {0, 3}),
+	{ok, _Root, Report} = graphdb_instance:create_instance("car", Owner, 5),
+	?assertEqual(#{fired => 0, failed => 0, not_attempted => 0, proposed => 0},
+				 graphdb_instance:summarize(Report)).
+
+%%-----------------------------------------------------------------------------
+%% B-prep BP-D3: {1, unbounded} mandatory mints Min (1) — no
+%% unbounded_multiplicity_not_fireable.
+%%-----------------------------------------------------------------------------
+firing_mandatory_min_unbounded_mints_min(Config) ->
+	{Owner, Bolt} = ?config(ob, Config),
+	{ok, _} = graphdb_rules:create_composition_rule(
+		environment, "OB1-U", Owner, Bolt, mandatory, {1, unbounded}),
+	{ok, _Root, [#{outcomes := Outs}]} =
+		graphdb_instance:create_instance("car", Owner, 5),
+	Fired = [O || O <- Outs, maps:get(status, O) =:= fired],
+	?assertEqual(1, length(Fired)),
+	?assert(lists:all(fun(O) ->
+		maps:get(reason, O, none) =/= unbounded_multiplicity_not_fireable
+	end, Outs)).
+
+%%-----------------------------------------------------------------------------
+%% B-prep BP-D2: auto composition mints Min children post-commit.
+%%-----------------------------------------------------------------------------
+firing_auto_mints_min(Config) ->
+	{Owner, Bolt} = ?config(ob, Config),
+	{ok, _} = graphdb_rules:create_composition_rule(
+		environment, "OBauto2-5", Owner, Bolt, auto, {2, 5}),
+	{ok, _Root, [#{outcomes := Outs}]} =
+		graphdb_instance:create_instance("car", Owner, 5),
+	Fired = [O || O <- Outs, maps:get(status, O) =:= fired],
+	?assertEqual(2, length(Fired)).
+
+%%-----------------------------------------------------------------------------
+%% B-prep BP-D3: {0, unbounded} auto mints nothing and does not fail.
+%%-----------------------------------------------------------------------------
+firing_auto_min_zero_unbounded(Config) ->
+	{Owner, Bolt} = ?config(ob, Config),
+	{ok, _} = graphdb_rules:create_composition_rule(
+		environment, "OBauto0-U", Owner, Bolt, auto, {0, unbounded}),
+	{ok, _Root, Report} = graphdb_instance:create_instance("car", Owner, 5),
+	Outs = lists:append([maps:get(outcomes, RR) || RR <- Report]),
+	?assertEqual([], [O || O <- Outs,
+		maps:get(reason, O, none) =:= unbounded_multiplicity_not_fireable]),
+	#{failed := 0} = graphdb_instance:summarize(Report).
 
 
 %%=============================================================================
