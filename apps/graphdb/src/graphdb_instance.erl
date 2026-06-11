@@ -119,6 +119,7 @@
 		start_link/0,
 		%% Creators
 		create_instance/3,
+		create_instance/4,
 		add_relationship/4,
 		add_relationship/5,
 		add_relationship/6,
@@ -181,7 +182,23 @@ start_link() ->
 %%   - compositional parent→child arc pair (char=28/27)
 %%-----------------------------------------------------------------------------
 create_instance(Name, ClassNref, ParentNref) ->
-	gen_server:call(?MODULE, {create_instance, Name, ClassNref, ParentNref}).
+	create_instance(Name, ClassNref, ParentNref, fun report_only/1).
+
+%%-----------------------------------------------------------------------------
+%% create_instance(Name, ClassNref, ParentNref, Resolver) ->
+%%     {ok, Nref, report()} | {error, Reason, report()} | {error, Reason}
+%%
+%% As /3, but threads a connection Resolver (B4).  /3 uses the built-in
+%% report_only resolver (defer-all): every connection rule surfaces as a report
+%% outcome and nothing is connected.
+%%-----------------------------------------------------------------------------
+create_instance(Name, ClassNref, ParentNref, Resolver)
+		when is_function(Resolver, 1) ->
+	gen_server:call(?MODULE,
+		{create_instance, Name, ClassNref, ParentNref, Resolver}).
+
+%% report_only(ConnContext) -> defer   (the built-in /3 resolver, B4-D2)
+report_only(_Ctx) -> defer.
 
 
 %%-----------------------------------------------------------------------------
@@ -355,10 +372,11 @@ init([]) ->
 %%-----------------------------------------------------------------------------
 %% handle_call/3 -- Creators
 %%-----------------------------------------------------------------------------
-handle_call({create_instance, Name, ClassNref, ParentNref}, _From,
+handle_call({create_instance, Name, ClassNref, ParentNref, Resolver}, _From,
 		#state{instantiable_nref = InstAttr} = State) ->
-	{reply, do_create_instance(Name, ClassNref, ParentNref, InstAttr, []),
-		State};
+	Ctx = #{inst_attr => InstAttr, on_path => [], resolver => Resolver,
+			root_parent => ParentNref, root_source => undefined},
+	{reply, do_create_instance(Name, ClassNref, ParentNref, Ctx), State};
 
 handle_call({add_relationship, S, C, T, R, TemplateSpec, AVPSpec},
 		_From, State) ->
@@ -443,22 +461,24 @@ find_avp_value([_ | Rest], AttrNref) ->
 
 
 %%-----------------------------------------------------------------------------
-%% do_create_instance(Name, ClassNref, ParentNref, InstAttr, OnPath)
+%% do_create_instance(Name, ClassNref, ParentNref, Ctx)
 %%     -> {ok, Nref, report()} | {error, Reason, report()} | {error, Reason}
 %%
 %% The unifying internal entry (B2-D2): every cascade level flows through
-%% here, never the gen_server API (that would deadlock).  OnPath is the
-%% class path for the on-path cycle guard.  Validates the class (must be
-%% kind=class and instantiable) and parent (must exist); pre-PLAN errors
-%% return a 2-tuple {error, Reason} (no report).  Post-PLAN paths return
-%% 3-tuples.
+%% here, never the gen_server API (that would deadlock).  Ctx carries
+%% inst_attr, on_path (the class path for the on-path cycle guard), resolver,
+%% and the stable root_parent / root_source anchors (B4-D2a).  Validates the
+%% class (must be kind=class and instantiable) and parent (must exist);
+%% pre-PLAN errors return a 2-tuple {error, Reason} (no report).  Post-PLAN
+%% paths return 3-tuples.
 %%-----------------------------------------------------------------------------
-do_create_instance(Name, ClassNref, ParentNref, InstAttr, OnPath) ->
+do_create_instance(Name, ClassNref, ParentNref, Ctx) ->
+	InstAttr = maps:get(inst_attr, Ctx),
 	case do_validate_class(ClassNref, InstAttr) of
 		ok ->
 			case do_validate_parent(ParentNref) of
 				ok ->
-					fire_create(Name, ClassNref, ParentNref, OnPath);
+					fire_create(Name, ClassNref, ParentNref, Ctx);
 				{error, _} = Err ->
 					Err            %% pre-PLAN root error: 2-tuple (no report)
 			end;
@@ -467,20 +487,22 @@ do_create_instance(Name, ClassNref, ParentNref, InstAttr, OnPath) ->
 	end.
 
 %%-----------------------------------------------------------------------------
-%% fire_create(Name, ClassNref, ParentNref, OnPath)
+%% fire_create(Name, ClassNref, ParentNref, Ctx)
 %%     -> {ok, Nref, report()} | {error, Reason, report()}
 %%
 %% PLAN → EXECUTE → POST-COMMIT (B2-D1/D2/D3).  Calls graphdb_rules for the
 %% abstract plan tree, then executes the mandatory subtree atomically, then
 %% fires auto children best-effort post-commit.
 %%-----------------------------------------------------------------------------
-fire_create(Name, ClassNref, ParentNref, OnPath) ->
+fire_create(Name, ClassNref, ParentNref, Ctx) ->
 	case graphdb_rules:plan_composition_firing(?RULE_SCOPE, ClassNref) of
 		{ok, PlanTree} ->
-			case execute(Name, ClassNref, ParentNref, OnPath, PlanTree) of
+			case execute(Name, ClassNref, ParentNref, Ctx, PlanTree) of
 				{ok, RootNref, MandOutcomes, InstPlan} ->
-					AutoReport    = fire_auto(InstPlan, OnPath),
-					ProposeReport = fire_propose(InstPlan, OnPath),
+					Ctx1 = bind_root_source(Ctx, RootNref),
+					AutoReport    = fire_auto(InstPlan, Ctx1),
+					ProposeReport = fire_propose(InstPlan,
+									maps:get(on_path, Ctx1)),
 					{ok, RootNref,
 					 merge_reports(merge_reports(MandOutcomes, AutoReport),
 								   ProposeReport)};
@@ -492,13 +514,26 @@ fire_create(Name, ClassNref, ParentNref, OnPath) ->
 	end.
 
 %%-----------------------------------------------------------------------------
+%% bind_root_source(Ctx, RootNref) -> Ctx'
+%%
+%% At the top level root_source is undefined -> bind it to the freshly
+%% allocated root nref; for a threaded descendant it is already set and
+%% kept unchanged (B4-D2a).
+%%-----------------------------------------------------------------------------
+bind_root_source(Ctx, RootNref) ->
+	case maps:get(root_source, Ctx) of
+		undefined -> Ctx#{root_source => RootNref};
+		_         -> Ctx
+	end.
+
+%%-----------------------------------------------------------------------------
 %% execute(RootName, RootClass, RootParent, OnPath, PlanTree)
 %%     -> {ok, RootNref, MandOutcomes, InstPlan} | {error, Reason, report()}
 %%
 %% Allocates every node's nrefs/ids OUTSIDE the transaction, writes the
 %% root and the whole mandatory subtree in ONE Mnesia transaction.
 %%-----------------------------------------------------------------------------
-execute(RootName, _RootClass, RootParent, _OnPath, PlanTree) ->
+execute(RootName, _RootClass, RootParent, _Ctx, PlanTree) ->
 	%% Annotate the plan tree with allocated nrefs (root uses caller's Name).
 	InstPlan = allocate_plan(PlanTree#{name => RootName}),
 	{Writes, Outcomes} = plan_writes(InstPlan, RootParent),
@@ -597,31 +632,39 @@ instance_records(Nref, ClassNref, Name, ParentNref) ->
 	 {relationships, P2C}, {relationships, C2P}].
 
 %%-----------------------------------------------------------------------------
-%% fire_auto(InstPlan, OnPath) -> report()
+%% fire_auto(InstPlan, Ctx) -> report()
 %%
 %% POST-COMMIT best-effort auto firing.  Walks the instantiated plan tree and
-%% fires each node's auto rules by recursing do_create_instance/5 (never the
-%% gen_server API — self-call deadlock).  Merges sub-reports additively.
-%% Failures are recorded in the report but do not abort the root instance.
+%% fires each node's auto rules by recursing do_create_instance/4 (never the
+%% gen_server API — self-call deadlock).  Pushes the node's class onto Ctx's
+%% on_path as the walk descends.  Merges sub-reports additively.  Failures are
+%% recorded in the report but do not abort the root instance.
 %%-----------------------------------------------------------------------------
 fire_auto(#{nref := Nref, class := Class, auto_rules := Autos,
-			mandatory_children := Kids}, OnPath) ->
-	OnPath1 = [Class | OnPath],
+			mandatory_children := Kids}, Ctx) ->
+	Ctx1 = push_on_path(Ctx, Class),
 	Here = lists:foldl(
 		fun({RuleNode, Deploy}, Acc) ->
-			fire_one_auto(RuleNode, Deploy, Nref, OnPath1, Acc)
+			fire_one_auto(RuleNode, Deploy, Nref, Ctx1, Acc)
 		end, [], Autos),
 	lists:foldl(
-		fun(Child, Acc) -> merge_reports(Acc, fire_auto(Child, OnPath1)) end,
+		fun(Child, Acc) -> merge_reports(Acc, fire_auto(Child, Ctx1)) end,
 		Here, Kids).
 
 %%-----------------------------------------------------------------------------
-%% fire_one_auto(RuleNode, Deploy, OwnerNref, OnPath1, Acc) -> report()
+%% push_on_path(Ctx, ClassNref) -> Ctx' with ClassNref prepended to on_path
+%%-----------------------------------------------------------------------------
+push_on_path(Ctx, ClassNref) ->
+	Ctx#{on_path => [ClassNref | maps:get(on_path, Ctx)]}.
+
+%%-----------------------------------------------------------------------------
+%% fire_one_auto(RuleNode, Deploy, OwnerNref, Ctx, Acc) -> report()
 %%
 %% Check order: instantiable, then the vertical-cycle cut, then expansion.
-%% mints Min children post-commit (B-prep).
+%% mints Min children post-commit (B-prep).  Ctx's on_path already carries the
+%% owner's class (pushed by fire_auto).
 %%-----------------------------------------------------------------------------
-fire_one_auto(RuleNode, Deploy, OwnerNref, OnPath1, Acc) ->
+fire_one_auto(RuleNode, Deploy, OwnerNref, Ctx, Acc) ->
 	ChildClass = graphdb_rules:rule_child_class(RuleNode),
 	case graphdb_class:is_instantiable(ChildClass) of
 		false ->
@@ -630,24 +673,27 @@ fire_one_auto(RuleNode, Deploy, OwnerNref, OnPath1, Acc) ->
 				  reason => {class_not_instantiable, ChildClass}});
 		_ ->        %% true (or {error,_} -> treated as fireable; create reports)
 			{Min, _Max} = maps:get(multiplicity, Deploy, {1, 1}),
-			case lists:member(ChildClass, OnPath1) of
+			case lists:member(ChildClass, maps:get(on_path, Ctx)) of
 				true  -> Acc;       %% vertical cycle cut (B2-D5)
 				false -> fire_auto_children(RuleNode, Deploy, ChildClass,
-									Min, 1, OwnerNref, OnPath1, Acc)
+									Min, 1, OwnerNref, Ctx, Acc)
 			end
 	end.
 
 %%-----------------------------------------------------------------------------
-%% fire_auto_children — expand multiplicity, recursing do_create_instance/5
+%% fire_auto_children — expand multiplicity, recursing do_create_instance/4.
+%%
+%% Ctx is threaded UNCHANGED: the owner's class is already on Ctx's on_path
+%% (pushed by fire_auto); the child's own do_create_instance -> fire_create ->
+%% fire_auto pushes the child's class.  Do not push it twice.
 %%-----------------------------------------------------------------------------
-fire_auto_children(_RuleNode, _Deploy, _ChildClass, Mult, I, _Owner, _OnPath1,
+fire_auto_children(_RuleNode, _Deploy, _ChildClass, Mult, I, _Owner, _Ctx,
 				   Acc) when I > Mult ->
 	Acc;
-fire_auto_children(RuleNode, Deploy, ChildClass, Mult, I, OwnerNref, OnPath1,
+fire_auto_children(RuleNode, Deploy, ChildClass, Mult, I, OwnerNref, Ctx,
 				   Acc) ->
 	Name = graphdb_rules:rule_child_name(RuleNode, ChildClass, I, Mult),
-	Acc2 = case do_create_instance(Name, ChildClass, OwnerNref, undefined,
-								   OnPath1) of
+	Acc2 = case do_create_instance(Name, ChildClass, OwnerNref, Ctx) of
 		{ok, ChildNref, SubReport} ->
 			A1 = add_outcome(Acc, RuleNode, Deploy,
 					#{owner => OwnerNref, index => I, status => fired,
@@ -664,7 +710,7 @@ fire_auto_children(RuleNode, Deploy, ChildClass, Mult, I, OwnerNref, OnPath1,
 					  reason => R})
 	end,
 	fire_auto_children(RuleNode, Deploy, ChildClass, Mult, I + 1, OwnerNref,
-					   OnPath1, Acc2).
+					   Ctx, Acc2).
 
 %%-----------------------------------------------------------------------------
 %% fire_propose(InstPlan, OnPath) -> report()
