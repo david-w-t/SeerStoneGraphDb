@@ -351,8 +351,9 @@ plan_composition_firing(Scope, ClassNref, ConflictResolver) ->
 %%   kind = connection  -> Pair = {RuleNode, Deploy, ConnSpec}
 %%
 %% Bakes in the seed nrefs it needs (read ONCE here, in the caller's process)
-%% and returns a closure dispatching on the context `kind'.  Connection
-%% resolution is a pass-through until Task 4.
+%% and returns a closure dispatching on the context `kind': composition
+%% conflicts are resolved by referenced child class, connection conflicts by
+%% characterization + referenced target class.
 %%-----------------------------------------------------------------------------
 default_conflict_resolver() ->
 	{ok, Seeds} = seeded_nrefs(),
@@ -1048,10 +1049,11 @@ resolve_conflicts(#{kind := composition, rules := Pairs}, ChildAttr, TplAttr,
 	Items = [comp_item(P, ChildAttr, TplAttr, AppliedBy) || P <- Pairs],
 	Groups = assign_groups(Items, composition),
 	lists:flatmap(fun(G) -> resolve_group(G, composition) end, Groups);
-resolve_conflicts(#{kind := connection, rules := Specs}, _ChildAttr, _TplAttr,
-				  _AppliedBy) ->
-	%% Additive pass-through until Task 4 implements connection resolution.
-	Specs.
+resolve_conflicts(#{kind := connection, rules := Specs}, _ChildAttr, TplAttr,
+				  AppliedBy) ->
+	Items = [conn_item(S, TplAttr, AppliedBy) || S <- Specs],
+	Groups = assign_groups(Items, connection),
+	lists:flatmap(fun(G) -> resolve_group(G, connection) end, Groups).
 
 %% comp_item({RuleNode, Deploy}, ChildAttr, TplAttr, AppliedBy) -> item()
 %% item() = #{pair, ref, char, mode, min, max, owner, real_tpl}
@@ -1066,6 +1068,21 @@ comp_item({RuleNode, Deploy} = Pair, ChildAttr, TplAttr, AppliedBy) ->
 	  max   => Max,
 	  owner => Owner,
 	  real_tpl => real_template(RuleNode, TplAttr, Owner)}.
+
+%% conn_item({Rule, Deploy, Spec}, TplAttr, AppliedBy) -> item()
+%% target_class and characterization come from the connection Spec (no child
+%% attr needed); real_tpl re-derives the owning (source) class via applied_by.
+conn_item({Rule, Deploy, Spec} = Pair, TplAttr, AppliedBy) ->
+	{Min, Max} = maps:get(multiplicity, Deploy, {1, 1}),
+	Owner = owning_class(Rule, AppliedBy),
+	#{pair  => Pair,
+	  ref   => maps:get(target_class, Spec),
+	  char  => maps:get(characterization, Spec),
+	  mode  => maps:get(mode, Deploy, mandatory),
+	  min   => Min,
+	  max   => Max,
+	  owner => Owner,
+	  real_tpl => real_template(Rule, TplAttr, Owner)}.
 
 %% real_template(RuleNode, TplAttr, OwningClass) -> boolean()
 %% True iff the rule carries a content template_nref AVP whose value differs

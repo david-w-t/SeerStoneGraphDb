@@ -94,7 +94,9 @@
 	b5_comp_max_merge_unbounded/1,
 	b5_comp_same_level_mode_priority/1,
 	b5_comp_both_real_template_demote/1,
-	b5_comp_mixed_template_drop/1
+	b5_comp_mixed_template_drop/1,
+	b5_conn_target_shadow/1,
+	b5_conn_additive_unrelated/1
 ]).
 
 %%---------------------------------------------------------------------
@@ -282,7 +284,9 @@ groups() ->
 			b5_comp_max_merge_unbounded,
 			b5_comp_same_level_mode_priority,
 			b5_comp_both_real_template_demote,
-			b5_comp_mixed_template_drop
+			b5_comp_mixed_template_drop,
+			b5_conn_target_shadow,
+			b5_conn_additive_unrelated
 		]}
 	].
 
@@ -1506,6 +1510,39 @@ b5_comp_mixed_template_drop(_Config) ->
     ?assertEqual(auto, maps:get(mode, Dep)),
     ?assertEqual({1, 2}, maps:get(multiplicity, Dep)).   %% greatest Max merged
 
+%%-----------------------------------------------------------------------------
+%% Connection target shadow (B5-D1): Car owns Garage (is-a Building); Vehicle
+%% owns Building, same `owns' characterization.  One winner -> Garage.
+%%-----------------------------------------------------------------------------
+b5_conn_target_shadow(_Config) ->
+    {ok, Vehicle}  = graphdb_class:create_class("Vehicle", 3),
+    {ok, Car}      = graphdb_class:create_class("Car", Vehicle),
+    {ok, Building} = graphdb_class:create_class("Building", 3),
+    {ok, Garage}   = graphdb_class:create_class("Garage", Building),
+    {Owns, Owned}  = make_rel_pair("owns", "owned_by"),
+    {ok, _} = graphdb_rules:create_connection_rule(
+        environment, "CG", Car, Owns, Owned, Garage, mandatory, {1, 1}),
+    {ok, _} = graphdb_rules:create_connection_rule(
+        environment, "VB", Vehicle, Owns, Owned, Building, mandatory, {1, 1}),
+    {ok, [{_R, _Dep, Spec}]} = resolve_conn(Car),
+    ?assertEqual(Garage, maps:get(target_class, Spec)).
+
+%%-----------------------------------------------------------------------------
+%% Connection additive (unrelated targets, same characterization): both survive.
+%%-----------------------------------------------------------------------------
+b5_conn_additive_unrelated(_Config) ->
+    {ok, Vehicle}  = graphdb_class:create_class("Vehicle", 3),
+    {ok, Car}      = graphdb_class:create_class("Car", Vehicle),
+    {ok, Building} = graphdb_class:create_class("Building", 3),
+    {ok, Boat}     = graphdb_class:create_class("Boat", 3),
+    {Owns, Owned}  = make_rel_pair("owns", "owned_by"),
+    {ok, _} = graphdb_rules:create_connection_rule(
+        environment, "CB", Car, Owns, Owned, Boat, mandatory, {1, 1}),
+    {ok, _} = graphdb_rules:create_connection_rule(
+        environment, "VB", Vehicle, Owns, Owned, Building, mandatory, {1, 1}),
+    {ok, Pairs} = resolve_conn(Car),
+    ?assertEqual(2, length(Pairs)).
+
 
 %%=============================================================================
 %% Local test helpers
@@ -1521,6 +1558,14 @@ resolve_comp(ClassNref) ->
                   is_composition_pair(P)],
     Resolver = graphdb_rules:default_conflict_resolver(),
     {ok, Resolver(#{kind => composition, rules => Pairs, class_nref => ClassNref})}.
+
+%% resolve_conn(ClassNref) -> {ok, [{#node{}, Deploy, Spec}]}
+%% Drives the default conflict resolver over the connection rules effective for
+%% ClassNref, exactly as the connection-firing path would.
+resolve_conn(ClassNref) ->
+    {ok, Specs} = graphdb_rules:effective_connection_rules(environment, ClassNref),
+    Resolver = graphdb_rules:default_conflict_resolver(),
+    {ok, Resolver(#{kind => connection, rules => Specs, class_nref => ClassNref})}.
 
 %% is_composition_pair({RuleNode, _Deploy}) -> boolean()
 %% A pair is composition iff its rule node is a CompositionRule instance.
