@@ -282,7 +282,8 @@ effective_rules_for_class(Scope, ClassNref) ->
 %% filtered to the ConnectionRule meta-class, each paired with its applies_to
 %% deployment and a ConnSpec decoded from the rule node's content AVPs.  The
 %% connection-firing engine consumes this during create_instance.  Additive -- a
-%% rule reached from two ancestors appears twice (precedence is a later phase).
+%% rule reached from two ancestors appears twice; horizontal precedence is
+%% applied at firing time by the conflict resolver (B5), not here.
 %% {project, _} -> {ok, []}.
 %%-----------------------------------------------------------------------------
 effective_connection_rules(Scope, ClassNref) ->
@@ -541,7 +542,7 @@ handle_call({list_rules, {project, _}}, _From, State) ->
 handle_call({plan_composition_firing, environment, ClassNref}, _From, State) ->
 	%% /2 is the additive, UNRESOLVED public read (B1 contract).  It must stay
 	%% identity forever — do NOT route it through default_conflict_resolver/0,
-	%% which becomes the real precedence algorithm in B5 Tasks 2-4.
+	%% which is the B5 precedence algorithm (used only by the /3 firing path).
 	Identity = fun(#{rules := R}) -> R end,
 	Reply = plan_node(ClassNref, root, undefined, undefined, [], State, Identity),
 	{reply, Reply, State};
