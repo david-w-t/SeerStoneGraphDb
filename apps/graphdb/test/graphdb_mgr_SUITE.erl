@@ -849,6 +849,14 @@ retire_node_sets_and_clears_marker(_Config) ->
 	ok = graphdb_mgr:retire_node(ClassNref),
 	[#node{attribute_value_pairs = AVPs1}] =
 		mnesia:dirty_read(nodes, ClassNref),
+	%% Consideration (future hardening): this predicate matches ANY
+	%% value=>true AVP, not the `retired` attribute specifically. A fresh
+	%% class carries no other boolean-true AVP today, so it is not a false
+	%% positive — but a stricter, attribute-specific check would be:
+	%%   {ok, #{retired := RetiredNref}} = graphdb_attr:seeded_nrefs(),
+	%%   ?assert(lists:any(
+	%%       fun(#{attribute := A, value := true}) when A =:= RetiredNref -> true;
+	%%          (_) -> false end, AVPs1)),
 	?assert(lists:any(fun(#{value := true}) -> true; (_) -> false end, AVPs1)),
 	ok = graphdb_mgr:unretire_node(ClassNref),
 	[#node{attribute_value_pairs = AVPs2}] =
