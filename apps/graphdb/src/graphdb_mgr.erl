@@ -369,8 +369,24 @@ init([]) ->
 %%-----------------------------------------------------------------------------
 %% handle_call/3 -- Read operations
 %%-----------------------------------------------------------------------------
-handle_call({get_node, Nref}, _From, State) ->
-	{reply, do_get_node(Nref), State};
+handle_call({get_node, Nref}, _From, State0) ->
+	case do_get_node(Nref) of
+		{ok, Node} ->
+			{Reply, State} = case has_true_avp(Node) of
+				false ->
+					{{ok, Node}, State0};
+				true ->
+					{RetAttr, State1} = ensure_retired_nref(State0),
+					R = case is_retired_avp_present(Node, RetAttr) of
+						true  -> {error, retired};
+						false -> {ok, Node}
+					end,
+					{R, State1}
+			end,
+			{reply, Reply, State};
+		{error, _} = Err ->
+			{reply, Err, State0}
+	end;
 
 handle_call({get_relationships, Nref, Direction}, _From, State) ->
 	{reply, do_get_relationships(Nref, Direction), State};
@@ -586,6 +602,26 @@ set_marker(AVPs, RetAttr, Bool) ->
 
 is_retired_avp(#{attribute := A}, RetAttr) -> A =:= RetAttr;
 is_retired_avp(_, _)                       -> false.
+
+%%-----------------------------------------------------------------------------
+%% has_true_avp(Node) -> boolean()
+%% Quick pre-filter: true iff the node has any AVP with value => true.
+%% Used by the get_node handle_call to short-circuit the ensure_retired_nref
+%% lookup on ordinary (non-retired) reads, keeping get_node callable without
+%% graphdb_attr running (e.g. read_ops tests that start only graphdb_mgr).
+%%-----------------------------------------------------------------------------
+has_true_avp(#node{attribute_value_pairs = AVPs}) ->
+	lists:any(fun(#{value := true}) -> true; (_) -> false end, AVPs).
+
+%%-----------------------------------------------------------------------------
+%% is_retired_avp_present(Node, RetAttr) -> boolean()
+%% True iff Node carries the `retired` boolean marker AVP
+%% (attribute=RetAttr, value=true).
+%%-----------------------------------------------------------------------------
+is_retired_avp_present(#node{attribute_value_pairs = AVPs}, RetAttr) ->
+	lists:any(fun(#{attribute := A, value := true}) when A =:= RetAttr -> true;
+				 (_) -> false
+			  end, AVPs).
 
 
 %%-----------------------------------------------------------------------------

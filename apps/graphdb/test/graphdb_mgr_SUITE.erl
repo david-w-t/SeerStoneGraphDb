@@ -100,7 +100,8 @@
 	retire_node_sets_and_clears_marker/1,
 	retire_node_is_idempotent/1,
 	retire_node_refuses_permanent_tier/1,
-	retire_node_not_found/1
+	retire_node_not_found/1,
+	get_node_hides_retired/1
 ]).
 
 
@@ -167,7 +168,8 @@ groups() ->
 			retire_node_sets_and_clears_marker,
 			retire_node_is_idempotent,
 			retire_node_refuses_permanent_tier,
-			retire_node_not_found
+			retire_node_not_found,
+			get_node_hides_retired
 		]}
 	].
 
@@ -225,7 +227,8 @@ init_per_testcase(TC, Config) when
 		TC =:= retire_node_sets_and_clears_marker;
 		TC =:= retire_node_is_idempotent;
 		TC =:= retire_node_refuses_permanent_tier;
-		TC =:= retire_node_not_found ->
+		TC =:= retire_node_not_found;
+		TC =:= get_node_hides_retired ->
 	Config1 = setup_isolated_env(Config),
 	BootstrapFile = proplists:get_value(bootstrap_file, Config),
 	application:set_env(seerstone_graph_db, bootstrap_file, BootstrapFile),
@@ -892,3 +895,15 @@ retire_node_not_found(_Config) ->
 	BadNref = ?NREF_START + 999999,
 	?assertEqual({error, not_found}, graphdb_mgr:retire_node(BadNref)),
 	?assertEqual({error, not_found}, graphdb_mgr:unretire_node(BadNref)).
+
+%%-----------------------------------------------------------------------------
+%% get_node/1 returns {error, retired} for a retired node; unretiring
+%% restores the {ok, #node{}} response.
+%%-----------------------------------------------------------------------------
+get_node_hides_retired(_Config) ->
+	{ok, ClassNref} = graphdb_mgr:create_class("HideMe", 3),
+	{ok, _} = graphdb_mgr:get_node(ClassNref),
+	ok = graphdb_mgr:retire_node(ClassNref),
+	?assertEqual({error, retired}, graphdb_mgr:get_node(ClassNref)),
+	ok = graphdb_mgr:unretire_node(ClassNref),
+	{ok, #node{nref = ClassNref}} = graphdb_mgr:get_node(ClassNref).
