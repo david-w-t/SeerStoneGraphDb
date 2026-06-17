@@ -91,7 +91,11 @@
 	avps					%% [#{attribute => Nref, value => term()}]
 }).
 
--record(state, {}).
+-record(state, {
+	retired_nref			%% integer() | undefined -- seeded `retired`
+							%% marker nref; lazily fetched from graphdb_attr
+							%% on first use (graphdb_attr starts after mgr)
+}).
 
 
 %%---------------------------------------------------------------------
@@ -112,6 +116,8 @@
 		create_instance/3,
 		add_relationship/4,
 		delete_node/1,
+		retire_node/1,
+		unretire_node/1,
 		update_node_avps/2,
 		%% Transaction helper (write-path seam)
 		transaction/1,
@@ -239,6 +245,20 @@ add_relationship(SourceNref, CharNref, TargetNref, ReciprocalNref) ->
 %%-----------------------------------------------------------------------------
 delete_node(Nref) ->
 	gen_server:call(?MODULE, {delete_node, Nref}).
+
+
+%%-----------------------------------------------------------------------------
+%% retire_node(Nref) -> ok | {error, Reason}
+%% Soft-retires a runtime node (sets the boolean `retired` marker AVP).
+%% Idempotent. Refuses the permanent tier (Nref < ?NREF_START).
+%%-----------------------------------------------------------------------------
+retire_node(Nref) ->
+	gen_server:call(?MODULE, {retire_node, Nref}).
+
+%% unretire_node(Nref) -> ok | {error, Reason}
+%% Clears the `retired` marker. Idempotent.
+unretire_node(Nref) ->
+	gen_server:call(?MODULE, {unretire_node, Nref}).
 
 
 %%-----------------------------------------------------------------------------
@@ -377,6 +397,13 @@ handle_call({add_relationship, SourceNref, CharNref, TargetNref, ReciprocalNref}
 		graphdb_instance:add_relationship(SourceNref, CharNref, TargetNref, ReciprocalNref),
 		State};
 
+handle_call({retire_node, Nref}, _From, State0) ->
+	{Reply, State} = set_retired(Nref, true, State0),
+	{reply, Reply, State};
+handle_call({unretire_node, Nref}, _From, State0) ->
+	{Reply, State} = set_retired(Nref, false, State0),
+	{reply, Reply, State};
+
 handle_call({delete_node, Nref}, _From, State) ->
 	case check_category_guard(Nref) of
 		{error, _} = Err ->
@@ -495,6 +522,70 @@ check_category_guard(Nref) ->
 		{error, _} = Err ->
 			Err
 	end.
+
+
+%%-----------------------------------------------------------------------------
+%% set_retired(Nref, Bool, State) -> {ok | {error, Reason}, State'}
+%%
+%% Tier-2 wrapper. Static arithmetic guard refuses the whole permanent tier
+%% (Nref < ?NREF_START); otherwise lazily resolves the seeded `retired`
+%% nref (caching it in State) and runs the tier-1 primitive through the
+%% transaction seam. Returns the possibly-updated State so the cache sticks.
+%%-----------------------------------------------------------------------------
+set_retired(Nref, _Bool, State) when Nref < ?NREF_START ->
+	{{error, permanent_node_immutable}, State};
+set_retired(Nref, Bool, State0) ->
+	{RetAttr, State} = ensure_retired_nref(State0),
+	Reply = case graphdb_mgr:transaction(
+				fun() -> set_retired_(Nref, Bool, RetAttr) end) of
+		{ok, ok}     -> ok;
+		{error, _}=E -> E
+	end,
+	{Reply, State}.
+
+%%-----------------------------------------------------------------------------
+%% ensure_retired_nref(State) -> {RetAttr, State'}
+%%
+%% Lazily fetches the seeded `retired` nref from graphdb_attr the first
+%% time it is needed and caches it in State. graphdb_attr is started after
+%% graphdb_mgr, so this cannot be done at init/1.
+%%-----------------------------------------------------------------------------
+ensure_retired_nref(#state{retired_nref = undefined} = State) ->
+	{ok, #{retired := RetAttr}} = graphdb_attr:seeded_nrefs(),
+	{RetAttr, State#state{retired_nref = RetAttr}};
+ensure_retired_nref(#state{retired_nref = RetAttr} = State) ->
+	{RetAttr, State}.
+
+%%-----------------------------------------------------------------------------
+%% set_retired_(Nref, Bool, RetAttr) -> ok
+%% Tier-1 primitive. Must run inside an active mnesia transaction. Reads the
+%% node under a write lock, rewrites its AVP list so the `retired` marker
+%% reflects Bool, writes it back. Aborts with not_found if absent.
+%%-----------------------------------------------------------------------------
+set_retired_(Nref, Bool, RetAttr) ->
+	case mnesia:read(nodes, Nref, write) of
+		[]     -> mnesia:abort(not_found);
+		[Node] ->
+			AVPs0 = Node#node.attribute_value_pairs,
+			AVPs1 = set_marker(AVPs0, RetAttr, Bool),
+			mnesia:write(nodes,
+				Node#node{attribute_value_pairs = AVPs1}, write)
+	end.
+
+%%-----------------------------------------------------------------------------
+%% set_marker(AVPs, RetAttr, Bool) -> AVPs'
+%% Removes any existing `retired` AVP; if Bool is true, appends a fresh
+%% #{attribute => RetAttr, value => true}. Setting false leaves it removed.
+%%-----------------------------------------------------------------------------
+set_marker(AVPs, RetAttr, Bool) ->
+	Stripped = [P || P <- AVPs, not is_retired_avp(P, RetAttr)],
+	case Bool of
+		true  -> Stripped ++ [#{attribute => RetAttr, value => true}];
+		false -> Stripped
+	end.
+
+is_retired_avp(#{attribute := A}, RetAttr) -> A =:= RetAttr;
+is_retired_avp(_, _)                       -> false.
 
 
 %%-----------------------------------------------------------------------------
