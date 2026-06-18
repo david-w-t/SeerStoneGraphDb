@@ -381,6 +381,9 @@ init_per_testcase(TC, Config) ->
 
 %% Test cases that call graphdb_mgr:retire_node/1 require runtime nrefs.
 %% Flip to the runtime tier (nref >= ?NREF_START) after seeding is complete.
+%% NOTE: add any future retire-guard test case to this guard list — without
+%% it the test runs in permanent phase and retire_node/1 rejects its
+%% runtime-tier target with {error, permanent_node_immutable}.
 maybe_set_runtime_phase(TC) when
 		TC =:= create_instance_refuses_retired_class;
 		TC =:= create_instance_refuses_retired_parent;

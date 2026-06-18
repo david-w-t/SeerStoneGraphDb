@@ -611,7 +611,10 @@ is_retired_avp(_, _)                       -> false.
 %% graphdb_attr running (e.g. read_ops tests that start only graphdb_mgr).
 %%-----------------------------------------------------------------------------
 has_true_avp(#node{attribute_value_pairs = AVPs}) ->
-	lists:any(fun(#{value := true}) -> true; (_) -> false end, AVPs).
+	lists:any(fun
+		(#{value := true}) -> true;
+		(_)                -> false
+	end, AVPs).
 
 %%-----------------------------------------------------------------------------
 %% is_retired_avp_present(Node, RetAttr) -> boolean()
