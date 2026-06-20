@@ -126,11 +126,13 @@ and `remove_relationship` adopt it as their first consumers.
 
 Tracked follow-ups (not in the seam spec):
 
-- **Retrofit existing write ops** (`create_instance`, `add_relationship`,
-  the membership `do_*` ops) onto the primitive/wrapper layering — uniform
-  convention, no behaviour change. Design (full sweep of all 40
-  `mnesia:transaction` sites across the six workers + bootstrap):
-  `docs/designs/transaction-seam-retrofit-design.md`.
+- **Retrofit existing write ops** — IMPLEMENTED. Full sweep: all 40
+  `mnesia:transaction` sites across the six workers + bootstrap now route
+  through `graphdb_mgr:transaction/1` (the single `{atomic,_}`/`{aborted,_}`
+  mapping point). Behaviour-preserving; existing tests unchanged, +2 new
+  instance CT cases (`characterization_not_found`/`reciprocal_not_found`
+  arms). Design `docs/designs/transaction-seam-retrofit-design.md`; plan
+  `docs/superpowers/plans/2026-06-20-transaction-seam-retrofit.md`.
 - **Atomic `add_relationship`** — collapse its four separate transactions
   (validate → resolve classes → resolve template → write) into one.
   Blocked on `graphdb_class` exposing tier-1 in-transaction read
