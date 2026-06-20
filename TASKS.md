@@ -100,7 +100,7 @@ independent and broken into slices A–E below. `graphdb_mgr` owns the
 generic low-level node/relationship CRUD; type-specific behaviour
 delegates to the owning worker.
 
-### Transaction-layering seam (slice A prerequisite) — IN DESIGN
+### Transaction-layering seam (slice A prerequisite) — IMPLEMENTED
 
 The decided convention for all write-path mutation: separate the Mnesia
 transaction boundary from the CRUD logic, so operations compose into one
@@ -126,9 +126,20 @@ and `remove_relationship` adopt it as their first consumers.
 
 Tracked follow-ups (not in the seam spec):
 
-- **Retrofit existing write ops** (`create_instance`, `add_relationship`,
-  the membership `do_*` ops) onto the primitive/wrapper layering — uniform
-  convention, no behaviour change.
+- **Retrofit existing write ops** — IMPLEMENTED. Full sweep: all 40
+  `mnesia:transaction` sites across the six workers + bootstrap now route
+  through `graphdb_mgr:transaction/1` (the single `{atomic,_}`/`{aborted,_}`
+  mapping point). Behaviour-preserving; existing tests unchanged, +2 new
+  instance CT cases (`characterization_not_found`/`reciprocal_not_found`
+  arms). Design `docs/designs/transaction-seam-retrofit-design.md`; plan
+  `docs/superpowers/plans/2026-06-20-transaction-seam-retrofit.md`.
+- **Atomic `add_relationship`** — collapse its four separate transactions
+  (validate → resolve classes → resolve template → write) into one.
+  Blocked on `graphdb_class` exposing tier-1 in-transaction read
+  primitives: its reads (`default_template`, `get_template`,
+  `class_in_ancestry`) are `gen_server:call` today, which cannot run inside
+  an Mnesia transaction. Sequence with / before `mutate/1`, which wants
+  those primitives too.
 - **Batch `mutate([Mutation])`** — the tier-3 entry point.
 
 ### Node deletion (slice A) — IMPLEMENTED

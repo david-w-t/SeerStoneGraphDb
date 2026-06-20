@@ -307,9 +307,9 @@ handle_call({set_labels, Nref, Code, NewAVPs}, _From, State) ->
         mnesia:write(Table,
             #language_node{nref = Nref, avps = Merged}, write)
     end,
-    case mnesia:transaction(F) of
-        {atomic, ok}      -> {reply, ok, State};
-        {aborted, Reason} -> {reply, {error, Reason}, State}
+    case graphdb_mgr:transaction(F) of
+        {ok, ok}        -> {reply, ok, State};
+        {error, Reason} -> {reply, {error, Reason}, State}
     end;
 handle_call({resolve_label, Nref, AttrNref, Chain, Scope}, _From, State) ->
     Reply = do_resolve_label(Nref, AttrNref, Chain, Scope),
@@ -392,10 +392,10 @@ find_class_by_name(ParentNref, Name) ->
 			taxonomy),
 		lists:search(fun(N) -> class_has_name(N, Name) end, Children)
 	end,
-	case mnesia:transaction(F) of
-		{atomic, {value, #node{nref = Nref}}} -> Nref;
-		{atomic, false} -> throw({error, {class_not_found, Name}});
-		{aborted, R}    -> throw({error, R})
+	case graphdb_mgr:transaction(F) of
+		{ok, {value, #node{nref = Nref}}} -> Nref;
+		{ok, false} -> throw({error, {class_not_found, Name}});
+		{error, R}  -> throw({error, R})
 	end.
 
 
@@ -444,9 +444,9 @@ ensure_literal_seed(Name, ParentNref) ->
 				ok = mnesia:write(relationships, P2C, write),
 				ok = mnesia:write(relationships, C2P, write)
 			end,
-			case mnesia:transaction(F) of
-				{atomic, ok}      -> Nref;
-				{aborted, Reason} -> throw({error, Reason})
+			case graphdb_mgr:transaction(F) of
+				{ok, ok}        -> Nref;
+				{error, Reason} -> throw({error, Reason})
 			end
 	end.
 
@@ -505,9 +505,9 @@ build_lang_maps(LangCodeNref, BaseLangNref, LangHumanNref) ->
 		end, #{}, Nodes),
 		{CM, DM}
 	end,
-	case mnesia:transaction(F) of
-		{atomic, {CM, DM}} -> {CM, DM};
-		{aborted, Reason}  -> throw({error, {build_lang_maps_failed, Reason}})
+	case graphdb_mgr:transaction(F) of
+		{ok, {CM, DM}}  -> {CM, DM};
+		{error, Reason} -> throw({error, {build_lang_maps_failed, Reason}})
 	end.
 
 
@@ -626,10 +626,10 @@ do_register_language(Code, Name, State) ->
 		ok = mnesia:write(relationships, I2C, write),
 		ok = mnesia:write(relationships, C2I, write)
 	end,
-	case mnesia:transaction(F) of
-		{aborted, Reason} ->
+	case graphdb_mgr:transaction(F) of
+		{error, Reason} ->
 			{error, Reason};
-		{atomic, ok} ->
+		{ok, ok} ->
 			ok = ensure_overlay_table(overlay_table_name(Code, environment)),
 			NewState = State#state{
 				lang_code_map = maps:put(Code, Nref, State#state.lang_code_map)
@@ -689,10 +689,10 @@ do_register_dialect(Code, Name, BaseCode, State) ->
 				ok = mnesia:write(relationships, I2C, write),
 				ok = mnesia:write(relationships, C2I, write)
 			end,
-			case mnesia:transaction(F) of
-				{aborted, Reason} ->
+			case graphdb_mgr:transaction(F) of
+				{error, Reason} ->
 					{error, Reason};
-				{atomic, ok} ->
+				{ok, ok} ->
 					ok = ensure_overlay_table(
 						overlay_table_name(Code, environment)),
 					NewState = State#state{
@@ -731,10 +731,10 @@ do_project_language(ProjectRootNref, PLAttr, LCAttr) ->
 				not_found
 		end
 	end,
-	case mnesia:transaction(F) of
-		{atomic, not_found} -> not_found;
-		{atomic, Code}      -> {ok, Code};
-		{aborted, Reason}   -> {error, Reason}
+	case graphdb_mgr:transaction(F) of
+		{ok, not_found} -> not_found;
+		{ok, Code}      -> {ok, Code};
+		{error, Reason} -> {error, Reason}
 	end.
 
 
