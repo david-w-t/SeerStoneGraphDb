@@ -124,12 +124,13 @@
 		default_template/1,
 		default_template_in_txn/1,
 		is_instantiable/1,
-		%% Class-of resolution helper (used by graphdb_instance to validate
-		%% Template AVP class scope on Connection arcs)
+		%% Class-ancestry + template-scope helpers (used by graphdb_instance
+		%% to validate Template AVP class scope on Connection arcs)
 		class_in_ancestry/2,
 		class_in_ancestry_in_txn/2,
 		validate_template_scope_in_txn/3,
-		%% Inheritance
+		%% Inheritance (search_class_taxonomy backs graphdb_instance's
+		%% Priority-2 class-bound attribute resolution)
 		inherited_qcs/1,
 		search_class_taxonomy/2
 		]).
