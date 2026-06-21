@@ -128,6 +128,7 @@
 		%% Template AVP class scope on Connection arcs)
 		class_in_ancestry/2,
 		class_in_ancestry_in_txn/2,
+		validate_template_scope_in_txn/3,
 		%% Inheritance
 		inherited_qcs/1
 		]).
@@ -852,6 +853,38 @@ walk_ancestors_in_txn([Nref | Rest], Visited, Acc) ->
 		_ ->
 			walk_ancestors_in_txn(Rest, Visited, Acc)
 	end.
+
+
+%%-----------------------------------------------------------------------------
+%% validate_template_scope_in_txn(TemplateNref, SourceClass, TargetClass) -> ok
+%%     (aborts invalid_template / template_class_not_in_ancestry)
+%%
+%% Confirms TemplateNref resolves to a kind=template node whose parent class is
+%% in SourceClass's or TargetClass's taxonomic ancestry.  Tier-1 in-transaction
+%% helper: assumes it runs inside an active mnesia activity and signals failure
+%% via mnesia:abort/1.  Used by graphdb_instance to validate the Template AVP
+%% class scope on Connection arcs.
+%%-----------------------------------------------------------------------------
+validate_template_scope_in_txn(TemplateNref, SourceClass, TargetClass) ->
+	case get_template_in_txn(TemplateNref) of
+		{ok, #node{parents = TmplParents}} ->
+			TmplClass = head_parent(TmplParents),
+			InSource = class_in_ancestry_in_txn(TmplClass, SourceClass),
+			InTarget = class_in_ancestry_in_txn(TmplClass, TargetClass),
+			case InSource orelse InTarget of
+				true  -> ok;
+				false -> mnesia:abort({template_class_not_in_ancestry,
+					TemplateNref, TmplClass, SourceClass, TargetClass})
+			end;
+		{error, Reason} ->
+			mnesia:abort({invalid_template, TemplateNref, Reason})
+	end.
+
+%% head_parent(Parents) -> integer() | undefined
+%%
+%% First element of a node's parents cache, or undefined when empty.
+head_parent([])      -> undefined;
+head_parent([P | _]) -> P.
 
 
 %%-----------------------------------------------------------------------------

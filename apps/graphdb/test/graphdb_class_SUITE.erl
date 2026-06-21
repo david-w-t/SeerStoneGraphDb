@@ -91,6 +91,9 @@
 	class_in_ancestry_in_txn_ancestor/1,
 	class_in_ancestry_in_txn_unrelated/1,
 	class_in_ancestry_in_txn_diamond/1,
+	validate_template_scope_in_txn_in_scope/1,
+	validate_template_scope_in_txn_rejects_non_template/1,
+	validate_template_scope_in_txn_rejects_out_of_ancestry/1,
 	%% Qualifying characteristics
 	add_qc_basic/1,
 	add_qc_idempotent/1,
@@ -174,7 +177,10 @@ groups() ->
 			class_in_ancestry_in_txn_self,
 			class_in_ancestry_in_txn_ancestor,
 			class_in_ancestry_in_txn_unrelated,
-			class_in_ancestry_in_txn_diamond
+			class_in_ancestry_in_txn_diamond,
+			validate_template_scope_in_txn_in_scope,
+			validate_template_scope_in_txn_rejects_non_template,
+			validate_template_scope_in_txn_rejects_out_of_ancestry
 		]},
 		{qualifying, [], [
 			add_qc_basic,
@@ -700,6 +706,47 @@ class_in_ancestry_in_txn_diamond(_Config) ->
 	?assertEqual({ok, true}, graphdb_mgr:transaction(fun() ->
 		graphdb_class:class_in_ancestry_in_txn(A, D)
 	end)).
+
+%%-----------------------------------------------------------------------------
+%% validate_template_scope_in_txn accepts a template whose parent class is in
+%% the source class's ancestry (success returns ok -> {ok, ok}).
+%%-----------------------------------------------------------------------------
+validate_template_scope_in_txn_in_scope(_Config) ->
+	{ok, _} = graphdb_class:start_link(),
+	{ok, ClassNref} = graphdb_class:create_class("Person", 3),
+	{ok, Tmpl} = graphdb_class:default_template(ClassNref),
+	?assertEqual({ok, ok}, graphdb_mgr:transaction(fun() ->
+		graphdb_class:validate_template_scope_in_txn(Tmpl, ClassNref, ClassNref)
+	end)).
+
+%%-----------------------------------------------------------------------------
+%% validate_template_scope_in_txn rejects an nref that is not a template node,
+%% aborting {invalid_template, Nref, not_a_template}.
+%%-----------------------------------------------------------------------------
+validate_template_scope_in_txn_rejects_non_template(_Config) ->
+	{ok, _} = graphdb_class:start_link(),
+	{ok, ClassNref} = graphdb_class:create_class("Animal", 3),
+	?assertEqual({error, {invalid_template, ClassNref, not_a_template}},
+		graphdb_mgr:transaction(fun() ->
+			graphdb_class:validate_template_scope_in_txn(ClassNref, ClassNref,
+				ClassNref)
+		end)).
+
+%%-----------------------------------------------------------------------------
+%% validate_template_scope_in_txn rejects a template whose parent class is in
+%% neither the source nor the target class's ancestry.
+%%-----------------------------------------------------------------------------
+validate_template_scope_in_txn_rejects_out_of_ancestry(_Config) ->
+	{ok, _} = graphdb_class:start_link(),
+	{ok, AnimalCls}  = graphdb_class:create_class("Animal", 3),
+	{ok, VehicleCls} = graphdb_class:create_class("Vehicle", 3),
+	{ok, VehTmpl}    = graphdb_class:default_template(VehicleCls),
+	?assertEqual({error, {template_class_not_in_ancestry, VehTmpl, VehicleCls,
+			AnimalCls, AnimalCls}},
+		graphdb_mgr:transaction(fun() ->
+			graphdb_class:validate_template_scope_in_txn(VehTmpl, AnimalCls,
+				AnimalCls)
+		end)).
 
 
 %%=============================================================================
