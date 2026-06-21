@@ -150,9 +150,9 @@ Tracked follow-ups (not in the seam spec):
 - **Converge default-template name search** — `graphdb_class` carries two
   copies of the default-template name-search walk: the gen-server
   `do_find_template_by_name/2` (own txn) and the tier-1
-  `default_template_in_txn/1` (PR 1). The gen-server `default_template/1` path
-  is already transactional, so `do_default_template/1` could be rewritten to
-  wrap a txn and call `default_template_in_txn/1`, removing the duplication.
+  `default_template_in_txn/1` (PR 1). `do_default_template/1` already wraps its
+  own transaction, so it could be rewritten to call `default_template_in_txn/1`
+  inside that txn, removing the duplication.
   Deliberately deferred (the duplication is sanctioned project precedent);
   a future cleanup, not blocking anything.
 
