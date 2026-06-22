@@ -124,12 +124,15 @@
 		default_template/1,
 		default_template_in_txn/1,
 		is_instantiable/1,
-		%% Class-of resolution helper (used by graphdb_instance to validate
-		%% Template AVP class scope on Connection arcs)
+		%% Class-ancestry + template-scope helpers (used by graphdb_instance
+		%% to validate Template AVP class scope on Connection arcs)
 		class_in_ancestry/2,
 		class_in_ancestry_in_txn/2,
-		%% Inheritance
-		inherited_qcs/1
+		validate_template_scope_in_txn/3,
+		%% Inheritance (search_class_taxonomy backs graphdb_instance's
+		%% Priority-2 class-bound attribute resolution)
+		inherited_qcs/1,
+		search_class_taxonomy/2
 		]).
 
 %%---------------------------------------------------------------------
@@ -852,6 +855,92 @@ walk_ancestors_in_txn([Nref | Rest], Visited, Acc) ->
 		_ ->
 			walk_ancestors_in_txn(Rest, Visited, Acc)
 	end.
+
+
+%%-----------------------------------------------------------------------------
+%% validate_template_scope_in_txn(TemplateNref, SourceClass, TargetClass) -> ok
+%%     (aborts invalid_template / template_class_not_in_ancestry)
+%%
+%% Confirms TemplateNref resolves to a kind=template node whose parent class is
+%% in SourceClass's or TargetClass's taxonomic ancestry.  Tier-1 in-transaction
+%% helper: assumes it runs inside an active mnesia activity and signals failure
+%% via mnesia:abort/1.  Used by graphdb_instance to validate the Template AVP
+%% class scope on Connection arcs.
+%%-----------------------------------------------------------------------------
+validate_template_scope_in_txn(TemplateNref, SourceClass, TargetClass) ->
+	case get_template_in_txn(TemplateNref) of
+		{ok, #node{parents = TmplParents}} ->
+			TmplClass = head_parent(TmplParents),
+			InSource = class_in_ancestry_in_txn(TmplClass, SourceClass),
+			InTarget = class_in_ancestry_in_txn(TmplClass, TargetClass),
+			case InSource orelse InTarget of
+				true  -> ok;
+				false -> mnesia:abort({template_class_not_in_ancestry,
+					TemplateNref, TmplClass, SourceClass, TargetClass})
+			end;
+		{error, Reason} ->
+			mnesia:abort({invalid_template, TemplateNref, Reason})
+	end.
+
+%% head_parent(Parents) -> integer() | undefined
+%%
+%% First element of a node's parents cache, or undefined when empty.
+head_parent([])      -> undefined;
+head_parent([P | _]) -> P.
+
+
+%%-----------------------------------------------------------------------------
+%% search_class_taxonomy(ClassNref, AttrNref) ->
+%%     {ok, FoundClassNref, Value} | not_found
+%%
+%% Walks ClassNref and its taxonomy ancestors (nearest-first), returning the
+%% first bound-AVP match together with the class nref where it was found.  Used
+%% by graphdb_instance's attribute-inheritance resolution (Priority 2: class-
+%% level bound values).  Runs in the caller's process and reads via the public
+%% get_class/1 + ancestors/1 reads (behaviour-identical to its prior home in
+%% graphdb_instance).
+%%-----------------------------------------------------------------------------
+search_class_taxonomy(ClassNref, AttrNref) ->
+	case get_class(ClassNref) of
+		{ok, #node{attribute_value_pairs = AVPs}} ->
+			case find_avp_value(AVPs, AttrNref) of
+				{ok, V} ->
+					{ok, ClassNref, V};
+				not_found ->
+					case ancestors(ClassNref) of
+						{ok, Ancestors} ->
+							search_first_in_ancestors(Ancestors, AttrNref);
+						_ ->
+							not_found
+					end
+			end;
+		_ ->
+			not_found
+	end.
+
+search_first_in_ancestors([], _AttrNref) ->
+	not_found;
+search_first_in_ancestors(
+		[#node{nref = N, attribute_value_pairs = AVPs} | Rest], AttrNref) ->
+	case find_avp_value(AVPs, AttrNref) of
+		{ok, V}   -> {ok, N, V};
+		not_found -> search_first_in_ancestors(Rest, AttrNref)
+	end.
+
+%% find_avp_value(AVPs, AttrNref) -> {ok, Value} | not_found
+%%
+%% First AVP entry matching AttrNref with a bound (non-undefined) value.  An
+%% entry with value => undefined is a QC declaration, not a resolved value, and
+%% reads as not_found.  (Duplicated from graphdb_instance per the codebase's
+%% deliberate per-worker micro-helper convention — no shared util module.)
+find_avp_value([], _AttrNref) ->
+	not_found;
+find_avp_value([#{attribute := A, value := V} | _], A) when V =/= undefined ->
+	{ok, V};
+find_avp_value([#{attribute := A} | _], A) ->
+	not_found;
+find_avp_value([_ | Rest], AttrNref) ->
+	find_avp_value(Rest, AttrNref).
 
 
 %%-----------------------------------------------------------------------------

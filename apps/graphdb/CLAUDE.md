@@ -254,6 +254,20 @@ Manages the "is a" hierarchy of class nodes in the ontology.
   transaction (the seam's tier-1 contract) and are the prerequisite for atomic
   `add_relationship` / `mutate/1`. See
   `docs/designs/atomic-add-relationship-primitives-design.md`.
+- `validate_template_scope_in_txn/3` (template_nref, source_class,
+  target_class) — in-transaction helper (aborts on failure): confirms the
+  template is a `kind=template` node whose parent class is in the source's or
+  target's taxonomic ancestry, else aborts `{template_class_not_in_ancestry,
+  …}` / `{invalid_template, …, Reason}`. Called by
+  `graphdb_instance:add_relationship` to validate Connection-arc template scope
+  (relocated here from `graphdb_instance` — it is pure class-domain logic).
+- `search_class_taxonomy/2` (class_nref, attr_nref) — walks a class and its
+  taxonomy ancestors (nearest-first) for the first bound AVP, returning
+  `{ok, FoundClassNref, Value} | not_found`. Reads via the public
+  `get_class/1` + `ancestors/1` (not an in-txn primitive). Backs
+  `graphdb_instance`'s Priority-2 (class-bound) attribute inheritance
+  (relocated here from `graphdb_instance`); the per-instance membership
+  orchestration and ambiguity policy stay in `graphdb_instance`.
 
 ### `graphdb_instance` — Instance & Compositional Hierarchy
 

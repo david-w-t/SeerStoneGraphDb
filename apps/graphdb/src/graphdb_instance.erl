@@ -1201,8 +1201,8 @@ do_add_relationship(SourceNref, CharNref, TargetNref, ReciprocalNref,
 		{SourceClass, TargetClass} =
 			resolve_arc_classes_in_txn(SourceNref, TargetNref),
 		TemplateNref = resolve_template_in_txn(TemplateSpec, SourceClass),
-		ok = validate_template_scope_in_txn(TemplateNref, SourceClass,
-			TargetClass),
+		ok = graphdb_class:validate_template_scope_in_txn(TemplateNref,
+			SourceClass, TargetClass),
 		Rows = build_connection_rows(IdPair, SourceNref, CharNref, TargetNref,
 			ReciprocalNref, TemplateNref, AVPSpec),
 		lists:foreach(fun({Tab, Rec}) -> ok = mnesia:write(Tab, Rec, write) end,
@@ -1318,33 +1318,6 @@ resolve_template_in_txn(default, SourceClass) ->
 resolve_template_in_txn(TemplateNref, _SourceClass)
 		when is_integer(TemplateNref) ->
 	TemplateNref.
-
-
-%%-----------------------------------------------------------------------------
-%% validate_template_scope_in_txn(TemplateNref, SourceClass, TargetClass) -> ok
-%%     (aborts invalid_template / template_class_not_in_ancestry)
-%%
-%% Confirms TemplateNref resolves to a kind=template node whose parent class is
-%% in SourceClass's or TargetClass's taxonomic ancestry.  The nested Reason in
-%% {invalid_template, _, Reason} is byte-identical to the gen-server get_template
-%% form: get_template_in_txn returns the same {error, not_a_template|not_found}.
-%%-----------------------------------------------------------------------------
-validate_template_scope_in_txn(TemplateNref, SourceClass, TargetClass) ->
-	case graphdb_class:get_template_in_txn(TemplateNref) of
-		{ok, #node{parents = TmplParents}} ->
-			TmplClass = head_parent(TmplParents),
-			InSource = graphdb_class:class_in_ancestry_in_txn(TmplClass,
-				SourceClass),
-			InTarget = graphdb_class:class_in_ancestry_in_txn(TmplClass,
-				TargetClass),
-			case InSource orelse InTarget of
-				true  -> ok;
-				false -> mnesia:abort({template_class_not_in_ancestry,
-					TemplateNref, TmplClass, SourceClass, TargetClass})
-			end;
-		{error, Reason} ->
-			mnesia:abort({invalid_template, TemplateNref, Reason})
-	end.
 
 
 %%-----------------------------------------------------------------------------
@@ -1668,7 +1641,7 @@ resolve_from_class(InstNref, AttrNref) ->
 collect_class_hits(Classes, AttrNref) ->
 	lists:foldr(
 		fun(ClassNref, Acc) ->
-			case search_class_taxonomy(ClassNref, AttrNref) of
+			case graphdb_class:search_class_taxonomy(ClassNref, AttrNref) of
 				{ok, FoundClass, Value} -> [{FoundClass, Value} | Acc];
 				not_found               -> Acc
 			end
@@ -1683,36 +1656,6 @@ classify_class_hits([{ClassNref, _} | _] = Hits, AttrNref) ->
 		[Value] -> {ok, Value, ClassNref};
 		_       -> {error, {ambiguous_class_value, AttrNref, Hits}}
 	end.
-
-%% Walks ClassNref and its taxonomy ancestors (nearest-first), returning
-%% the first AVP match together with the class nref where it was found.
-search_class_taxonomy(ClassNref, AttrNref) ->
-	case graphdb_class:get_class(ClassNref) of
-		{ok, #node{attribute_value_pairs = AVPs}} ->
-			case find_avp_value(AVPs, AttrNref) of
-				{ok, V} ->
-					{ok, ClassNref, V};
-				not_found ->
-					case graphdb_class:ancestors(ClassNref) of
-						{ok, Ancestors} ->
-							search_first_in_ancestors(Ancestors, AttrNref);
-						_ ->
-							not_found
-					end
-			end;
-		_ ->
-			not_found
-	end.
-
-search_first_in_ancestors([], _AttrNref) ->
-	not_found;
-search_first_in_ancestors(
-		[#node{nref = N, attribute_value_pairs = AVPs} | Rest], AttrNref) ->
-	case find_avp_value(AVPs, AttrNref) of
-		{ok, V}   -> {ok, N, V};
-		not_found -> search_first_in_ancestors(Rest, AttrNref)
-	end.
-
 
 %%-----------------------------------------------------------------------------
 %% resolve_from_ancestors(ParentNref, AttrNref) ->
