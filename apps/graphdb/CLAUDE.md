@@ -378,12 +378,21 @@ Single public entry point; delegates to the five specialized workers.
 - Rejects any runtime request to create, modify, or delete a `category` node with `{error, category_nodes_are_immutable}`
 - Sequences Nref allocation → record write → Nref confirmation
 - `mutate/1` — tier-3 batch entry point. Applies an ordered list of
-  `add_relationship` / `retire_node` / `unretire_node` mutations atomically
-  in one `transaction/1` (all commit or none). Tagged-tuple grammar; opaque
-  bare-reason contract `{ok, [ok, ...]}` | `{error, Reason}` with whole-batch
-  rollback; `mutate([]) -> {ok, []}`. A **plain function**, not a
-  `gen_server:call` — it owns the transaction in the caller's process. See
+  `add_relationship` / `retire_node` / `unretire_node` / `update_node_avps`
+  mutations atomically in one `transaction/1` (all commit or none). Tagged-tuple
+  grammar; opaque bare-reason contract `{ok, [ok, ...]}` | `{error, Reason}`
+  with whole-batch rollback; `mutate([]) -> {ok, []}`. A **plain function**, not
+  a `gen_server:call` — it owns the transaction in the caller's process. See
   `docs/designs/batch-mutate-design.md`.
+- `update_node_avps/2` — merges a list of AVP updates onto a node atomically
+  through the transaction seam (tier-2 wrapper owning one `transaction/1`;
+  tier-1 `update_node_avps_in_txn/3` does the in-txn work). Each update map
+  upserts in place (or appends) when it carries a `value` key, or deletes
+  that attribute when it does not (`value => undefined` is a real
+  declared-but-unbound upsert, never a delete). Guards: category-immutable,
+  permanent-tier, well-formedness (client-side), attribute-existence
+  (upserts), and retired-marker (use `retire_node`/`unretire_node` instead).
+  See `docs/designs/slice-b-update-node-avps-design.md`.
 
 ---
 

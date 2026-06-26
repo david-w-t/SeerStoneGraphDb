@@ -28,8 +28,9 @@
 %% Write-side delegation -- create_attribute routes to
 %% graphdb_attr by ParentNref subtree; create_class and create_instance
 %% delegate directly to graphdb_class and graphdb_instance respectively;
-%% add_relationship delegates to graphdb_instance.  delete_node and
-%% update_node_avps remain not_implemented (no worker deletion/AVP-update
+%% add_relationship delegates to graphdb_instance.  update_node_avps merges
+%% an AVP list onto a node atomically (tier-2 wrapper + update_node_avps_in_txn
+%% tier-1 primitive).  delete_node remains not_implemented (no worker deletion
 %% API exists yet).
 %%---------------------------------------------------------------------
 -module(graphdb_mgr).
