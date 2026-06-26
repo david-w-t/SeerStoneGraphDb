@@ -154,3 +154,14 @@ apply_avp_updates_last_write_wins_test() ->
 apply_avp_updates_empty_updates_is_identity_test() ->
 	Existing = [#{attribute => 1, value => "a"}],
 	?assertEqual(Existing, graphdb_mgr:apply_avp_updates(Existing, [])).
+
+
+%%=============================================================================
+%% update_node_avps/2 client-side validation
+%%=============================================================================
+
+%% Malformed AVPs are rejected before any gen_server:call -- the server is
+%% not running under EUnit, so a proper error proves the short-circuit.
+update_node_avps_malformed_short_circuits_test() ->
+	?assertEqual({error, {invalid_avp, "bad"}},
+		graphdb_mgr:update_node_avps(123, ["bad"])).
