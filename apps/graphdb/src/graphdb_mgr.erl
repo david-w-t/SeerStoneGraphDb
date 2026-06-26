@@ -28,8 +28,9 @@
 %% Write-side delegation -- create_attribute routes to
 %% graphdb_attr by ParentNref subtree; create_class and create_instance
 %% delegate directly to graphdb_class and graphdb_instance respectively;
-%% add_relationship delegates to graphdb_instance.  delete_node and
-%% update_node_avps remain not_implemented (no worker deletion/AVP-update
+%% add_relationship delegates to graphdb_instance.  update_node_avps merges
+%% an AVP list onto a node atomically (tier-2 wrapper + update_node_avps_in_txn
+%% tier-1 primitive).  delete_node remains not_implemented (no worker deletion
 %% API exists yet).
 %%---------------------------------------------------------------------
 -module(graphdb_mgr).
@@ -121,6 +122,8 @@
 		update_node_avps/2,
 		%% Batch write (tier-3 entry point)
 		mutate/1,
+		%% Tier-1 in-txn write primitive (composed by mutate/1)
+		update_node_avps_in_txn/3,
 		%% Transaction helper (write-path seam)
 		transaction/1,
 		%% Cache invariant audit / repair
@@ -146,7 +149,9 @@
 -ifdef(TEST).
 -export([
 		validate_direction/1,
-		check_category_guard/1
+		check_category_guard/1,
+		validate_avp_updates/1,
+		apply_avp_updates/2
 		]).
 -endif.
 
@@ -266,12 +271,21 @@ unretire_node(Nref) ->
 %%-----------------------------------------------------------------------------
 %% update_node_avps(Nref, AVPs) -> ok | {error, term()}
 %%
-%% Updates the attribute-value pairs of a node.  Rejects updates to
-%% category nodes with {error, category_nodes_are_immutable}.
-%% Actual update not yet implemented.
+%% Merges a list of attribute-value-pair updates into a node's AVP list,
+%% atomically. Each update map upserts (replace-in-place-or-append) when it
+%% carries a `value` key, or deletes that attribute when it does not.
+%% Well-formedness is validated client-side before the gen_server:call.
+%% Rejects category nodes ({error, category_nodes_are_immutable}) and the
+%% permanent tier ({error, permanent_node_immutable}).
 %%-----------------------------------------------------------------------------
+-spec update_node_avps(integer(), [map()]) -> ok | {error, term()}.
 update_node_avps(Nref, AVPs) ->
-	gen_server:call(?MODULE, {update_node_avps, Nref, AVPs}).
+	case validate_avp_updates(AVPs) of
+		ok ->
+			gen_server:call(?MODULE, {update_node_avps, Nref, AVPs});
+		{error, _} = Err ->
+			Err
+	end.
 
 
 %%-----------------------------------------------------------------------------
@@ -309,8 +323,9 @@ transaction(Fun) ->
 %%   {add_relationship, S, C, T, R}                       default template, no AVPs
 %%   {add_relationship, S, C, T, R, Template}             explicit template nref
 %%   {add_relationship, S, C, T, R, Template, {Fwd, Rev}} + per-direction AVPs
-%%   {retire_node,   Nref}
-%%   {unretire_node, Nref}
+%%   {retire_node,      Nref}
+%%   {unretire_node,    Nref}
+%%   {update_node_avps, Nref, AVPs}                        merge/upsert AVP list
 %%
 %% Returns {ok, [Result]} -- one native success value per mutation in list
 %% order (every op returns `ok` today, so {ok, [ok, ok, ...]}) -- or the bare
@@ -357,6 +372,11 @@ validate_mutation({retire_node, Nref}) when is_integer(Nref) ->
 	tier_guard(Nref);
 validate_mutation({unretire_node, Nref}) when is_integer(Nref) ->
 	tier_guard(Nref);
+validate_mutation({update_node_avps, Nref, AVPs}) when is_integer(Nref) ->
+	case validate_avp_updates(AVPs) of
+		ok               -> tier_guard(Nref);
+		{error, _} = Err -> Err
+	end;
 validate_mutation(M) ->
 	{error, {bad_mutation, M}}.
 
@@ -396,6 +416,8 @@ prepare({add_relationship, S, C, T, R, Template, AVPSpec}) ->
 prepare({retire_node, _Nref} = M) ->
 	M;
 prepare({unretire_node, _Nref} = M) ->
+	M;
+prepare({update_node_avps, _Nref, _AVPs} = M) ->
 	M.
 
 %% Phase 3 dispatch. Runs INSIDE the transaction: no gen_server calls, no
@@ -408,7 +430,9 @@ dispatch({add_relationship, IdPair, S, C, T, R, TemplateSpec, AVPSpec},
 dispatch({retire_node, Nref}, _TkAttr, RetAttr) ->
 	set_retired_(Nref, true, RetAttr);
 dispatch({unretire_node, Nref}, _TkAttr, RetAttr) ->
-	set_retired_(Nref, false, RetAttr).
+	set_retired_(Nref, false, RetAttr);
+dispatch({update_node_avps, Nref, AVPs}, _TkAttr, RetAttr) ->
+	update_node_avps_in_txn(Nref, AVPs, RetAttr).
 
 
 %%-----------------------------------------------------------------------------
@@ -542,19 +566,17 @@ handle_call({delete_node, Nref}, _From, State) ->
 		ok ->
 			%% No worker currently implements node deletion.  The per-template
 			%% attribute category enforcement (instance-only, scoped by template)
-			%% is a known deferred gap for delete_node and update_node_avps.
+			%% is a known deferred gap for delete_node (slice C).
 			{reply, {error, not_implemented}, State}
 	end;
 
-handle_call({update_node_avps, Nref, _AVPs}, _From, State) ->
+handle_call({update_node_avps, Nref, AVPs}, _From, State) ->
 	case check_category_guard(Nref) of
 		{error, _} = Err ->
 			{reply, Err, State};
 		ok ->
-			%% No worker currently implements AVP-update operations.  The
-			%% instance-only attribute category enforcement (per-template) is a
-			%% known deferred gap for update_node_avps and create_class.
-			{reply, {error, not_implemented}, State}
+			{Reply, State1} = do_update_node_avps(Nref, AVPs, State),
+			{reply, Reply, State1}
 	end;
 
 handle_call(Request, From, State) ->
@@ -698,6 +720,67 @@ set_retired_(Nref, Bool, RetAttr) ->
 	end.
 
 %%-----------------------------------------------------------------------------
+%% do_update_node_avps(Nref, AVPs, State) -> {ok | {error, Reason}, State'}
+%%
+%% Tier-2 body. Static permanent-tier guard refuses the whole permanent tier
+%% (Nref < ?NREF_START); otherwise lazily resolves the seeded `retired` nref
+%% (caching it in State) and runs the tier-1 primitive through the
+%% transaction seam. Returns the possibly-updated State so the cache sticks.
+%% Precondition: AVPs already passed validate_avp_updates/1 (client-side) and
+%% Nref passed check_category_guard/1.
+%%-----------------------------------------------------------------------------
+do_update_node_avps(Nref, _AVPs, State) when Nref < ?NREF_START ->
+	{{error, permanent_node_immutable}, State};
+do_update_node_avps(Nref, AVPs, State0) ->
+	{RetAttr, State} = ensure_retired_nref(State0),
+	Reply = case graphdb_mgr:transaction(
+				fun() -> update_node_avps_in_txn(Nref, AVPs, RetAttr) end) of
+		{ok, ok}     -> ok;
+		{error, _}=E -> E
+	end,
+	{Reply, State}.
+
+%%-----------------------------------------------------------------------------
+%% update_node_avps_in_txn(Nref, AVPs, RetAttr) -> ok
+%% Tier-1 primitive. Must run inside an active mnesia transaction. Reads the
+%% node under a write lock; aborts not_found if absent. Aborts use_retire_api
+%% if any update targets the seeded `retired` attribute. Aborts
+%% {unknown_attribute, A} if any UPSERT references a non-attribute node.
+%% Applies the merge and writes the node back. RetAttr is resolved by the
+%% caller OUTSIDE the transaction (load-bearing: no gen_server call in-txn).
+%%-----------------------------------------------------------------------------
+update_node_avps_in_txn(Nref, AVPs, RetAttr) ->
+	case mnesia:read(nodes, Nref, write) of
+		[] ->
+			mnesia:abort(not_found);
+		[Node] ->
+			ok = guard_retired_marker(AVPs, RetAttr),
+			ok = guard_attribute_existence(AVPs),
+			New = apply_avp_updates(Node#node.attribute_value_pairs, AVPs),
+			mnesia:write(nodes, Node#node{attribute_value_pairs = New}, write)
+	end.
+
+%% Abort if any update (upsert or delete) targets the seeded `retired` attr.
+guard_retired_marker(AVPs, RetAttr) ->
+	case lists:any(fun(#{attribute := A}) -> A =:= RetAttr end, AVPs) of
+		true  -> mnesia:abort(use_retire_api);
+		false -> ok
+	end.
+
+%% Abort if any UPSERT references a node that is not an existing attribute
+%% node. Deletes (no `value` key) are skipped -- removing a reference does
+%% not require the attribute to still exist.
+guard_attribute_existence(AVPs) ->
+	Upserts = [A || #{attribute := A} = M <- AVPs, maps:is_key(value, M)],
+	lists:foreach(fun(A) ->
+		case mnesia:read(nodes, A, read) of
+			[#node{kind = attribute}] -> ok;
+			_                         -> mnesia:abort({unknown_attribute, A})
+		end
+	end, Upserts),
+	ok.
+
+%%-----------------------------------------------------------------------------
 %% set_marker(AVPs, RetAttr, Bool) -> AVPs'
 %% Removes any existing `retired` AVP; if Bool is true, appends a fresh
 %% #{attribute => RetAttr, value => true}. Setting false leaves it removed.
@@ -734,6 +817,70 @@ is_retired_avp_present(#node{attribute_value_pairs = AVPs}, RetAttr) ->
 	lists:any(fun(#{attribute := A, value := true}) when A =:= RetAttr -> true;
 				 (_) -> false
 			  end, AVPs).
+
+
+%%-----------------------------------------------------------------------------
+%% validate_avp_updates(AVPs) -> ok | {error, {invalid_avp, term()}}
+%% Pure, client-side. AVPs must be a list whose every element is a map whose
+%% key set is exactly [attribute] (delete) or [attribute, value] (upsert),
+%% with an integer attribute. Anything else is {invalid_avp, Offender}.
+%%-----------------------------------------------------------------------------
+validate_avp_updates(AVPs) when is_list(AVPs) ->
+	validate_avp_updates_(AVPs);
+validate_avp_updates(Other) ->
+	{error, {invalid_avp, Other}}.
+
+validate_avp_updates_([]) ->
+	ok;
+validate_avp_updates_([M | Rest]) ->
+	case valid_avp_update(M) of
+		true  -> validate_avp_updates_(Rest);
+		false -> {error, {invalid_avp, M}}
+	end.
+
+valid_avp_update(#{attribute := A} = M) when is_integer(A) ->
+	case lists:sort(maps:keys(M)) of
+		[attribute]        -> true;   %% delete
+		[attribute, value] -> true;   %% upsert
+		_                  -> false
+	end;
+valid_avp_update(_) ->
+	false.
+
+%%-----------------------------------------------------------------------------
+%% apply_avp_updates(Existing, Updates) -> NewAVPs
+%% Pure. Folds each update over the AVP list, left-to-right:
+%%   - update map WITH a `value` key  -> upsert: replace the matching entry
+%%     in place if present, else append the new entry to the tail
+%%   - update map WITHOUT a `value` key -> delete that attribute (no-op if
+%%     absent)
+%% Precondition: Updates already passed validate_avp_updates/1.
+%%-----------------------------------------------------------------------------
+apply_avp_updates(Existing, Updates) ->
+	lists:foldl(fun apply_one_avp_update/2, Existing, Updates).
+
+apply_one_avp_update(#{attribute := A} = Update, AVPs) ->
+	case maps:is_key(value, Update) of
+		true  -> upsert_avp(AVPs, A, maps:get(value, Update));
+		false -> delete_avp(AVPs, A)
+	end.
+
+%% Replace the entry for A in place if present, else append to the tail.
+upsert_avp(AVPs, A, V) ->
+	New = #{attribute => A, value => V},
+	case lists:any(fun(P) -> is_avp_for(P, A) end, AVPs) of
+		true ->
+			[case is_avp_for(P, A) of true -> New; false -> P end
+				|| P <- AVPs];
+		false ->
+			AVPs ++ [New]
+	end.
+
+delete_avp(AVPs, A) ->
+	[P || P <- AVPs, not is_avp_for(P, A)].
+
+is_avp_for(#{attribute := A}, A) -> true;
+is_avp_for(_, _)                 -> false.
 
 
 %%-----------------------------------------------------------------------------

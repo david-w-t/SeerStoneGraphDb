@@ -112,7 +112,23 @@
 	mutate_malformed_term/1,
 	mutate_permanent_tier_guard/1,
 	mutate_add_relationship_explicit_template/1,
-	mutate_add_relationship_with_avps/1
+	mutate_add_relationship_with_avps/1,
+	%% update_node_avps (solo / tier-2 path)
+	update_node_avps_upsert_roundtrip/1,
+	update_node_avps_overwrite_preserves_head/1,
+	update_node_avps_delete/1,
+	update_node_avps_delete_absent_noop/1,
+	update_node_avps_undefined_retained/1,
+	update_node_avps_unknown_attribute/1,
+	update_node_avps_retired_marker_rejected/1,
+	update_node_avps_not_found/1,
+	update_node_avps_permanent_tier/1,
+	update_node_avps_atomic_rollback/1,
+	mutate_single_update_node_avps/1,
+	mutate_mixed_add_rel_and_update_avps/1,
+	mutate_update_avps_rollback/1,
+	mutate_update_avps_malformed/1,
+	mutate_update_avps_not_found/1
 ]).
 
 
@@ -127,7 +143,7 @@ all() ->
 	[{group, init_tests}, {group, read_ops},
 	 {group, category_guard}, {group, write_delegation},
 	 {group, cache_audit}, {group, transaction_seam},
-	 {group, soft_retire}, {group, mutate}].
+	 {group, soft_retire}, {group, mutate}, {group, update_avps}].
 
 groups() ->
 	[
@@ -192,7 +208,24 @@ groups() ->
 			mutate_malformed_term,
 			mutate_permanent_tier_guard,
 			mutate_add_relationship_explicit_template,
-			mutate_add_relationship_with_avps
+			mutate_add_relationship_with_avps,
+			mutate_single_update_node_avps,
+			mutate_mixed_add_rel_and_update_avps,
+			mutate_update_avps_rollback,
+			mutate_update_avps_malformed,
+			mutate_update_avps_not_found
+		]},
+		{update_avps, [], [
+			update_node_avps_upsert_roundtrip,
+			update_node_avps_overwrite_preserves_head,
+			update_node_avps_delete,
+			update_node_avps_delete_absent_noop,
+			update_node_avps_undefined_retained,
+			update_node_avps_unknown_attribute,
+			update_node_avps_retired_marker_rejected,
+			update_node_avps_not_found,
+			update_node_avps_permanent_tier,
+			update_node_avps_atomic_rollback
 		]}
 	].
 
@@ -261,7 +294,22 @@ init_per_testcase(TC, Config) when
 		TC =:= mutate_malformed_term;
 		TC =:= mutate_permanent_tier_guard;
 		TC =:= mutate_add_relationship_explicit_template;
-		TC =:= mutate_add_relationship_with_avps ->
+		TC =:= mutate_add_relationship_with_avps;
+		TC =:= update_node_avps_upsert_roundtrip;
+		TC =:= update_node_avps_overwrite_preserves_head;
+		TC =:= update_node_avps_delete;
+		TC =:= update_node_avps_delete_absent_noop;
+		TC =:= update_node_avps_undefined_retained;
+		TC =:= update_node_avps_unknown_attribute;
+		TC =:= update_node_avps_retired_marker_rejected;
+		TC =:= update_node_avps_not_found;
+		TC =:= update_node_avps_permanent_tier;
+		TC =:= update_node_avps_atomic_rollback;
+		TC =:= mutate_single_update_node_avps;
+		TC =:= mutate_mixed_add_rel_and_update_avps;
+		TC =:= mutate_update_avps_rollback;
+		TC =:= mutate_update_avps_malformed;
+		TC =:= mutate_update_avps_not_found ->
 	Config1 = setup_isolated_env(Config),
 	BootstrapFile = proplists:get_value(bootstrap_file, Config),
 	application:set_env(seerstone_graph_db, bootstrap_file, BootstrapFile),
@@ -524,12 +572,15 @@ category_guard_allows_noncategory_delete(_Config) ->
 		graphdb_mgr:delete_node(6)).
 
 %%-----------------------------------------------------------------------------
-%% update_node_avps passes guard for non-category nodes.
+%% update_node_avps passes the category guard for non-category nodes; nref 6
+%% is permanent-tier, so it is then refused with permanent_node_immutable
+%% (proving it cleared the category guard rather than being rejected as a
+%% category node).
 %%-----------------------------------------------------------------------------
 category_guard_allows_noncategory_update(_Config) ->
 	{ok, _} = graphdb_mgr:start_link(),
-	%% Nref 6 (Names) is an attribute node -- should pass guard
-	?assertEqual({error, not_implemented},
+	%% Nref 6 (Names) is an attribute node -- clears the category guard
+	?assertEqual({error, permanent_node_immutable},
 		graphdb_mgr:update_node_avps(6, [#{attribute => 99, value => "test"}])).
 
 %%-----------------------------------------------------------------------------
@@ -1154,3 +1205,210 @@ mutate_add_relationship_with_avps(_Config) ->
 		R#relationship.target_nref =:= A],
 	?assert(lists:member(RevOnly,    Rev#relationship.avps)),
 	?assertNot(lists:member(FwdOnly, Rev#relationship.avps)).
+
+
+%%-----------------------------------------------------------------------------
+%% A single update_node_avps mutation returns {ok, [ok]} and writes the AVP.
+%%-----------------------------------------------------------------------------
+mutate_single_update_node_avps(_Config) ->
+	{ok, ClassNref} = graphdb_class:create_class("MUAClass", 3),
+	{ok, Inst, _} = graphdb_instance:create_instance("MUAInst", ClassNref, 5),
+	{ok, Attr} = graphdb_attr:create_literal_attribute("MUAAttr", string),
+	?assertEqual({ok, [ok]},
+		graphdb_mgr:mutate([{update_node_avps, Inst,
+			[#{attribute => Attr, value => "blue"}]}])),
+	[#node{attribute_value_pairs = AVPs}] = mnesia:dirty_read(nodes, Inst),
+	?assert(lists:member(#{attribute => Attr, value => "blue"}, AVPs)).
+
+%%-----------------------------------------------------------------------------
+%% A mixed batch (add_relationship + update_node_avps) all succeeds.
+%%-----------------------------------------------------------------------------
+mutate_mixed_add_rel_and_update_avps(_Config) ->
+	{ok, ClassNref} = graphdb_class:create_class("MMUAClass", 3),
+	{ok, InstA, _} = graphdb_instance:create_instance("MMUAA", ClassNref, 5),
+	{ok, InstB, _} = graphdb_instance:create_instance("MMUAB", ClassNref, 5),
+	{ok, {Ch, Re}} =
+		graphdb_attr:create_relationship_attribute_pair("MMUAk", "MMUAkb",
+			instance),
+	{ok, Attr} = graphdb_attr:create_literal_attribute("MMUAAttr", string),
+	Batch = [{add_relationship, InstA, Ch, InstB, Re},
+			 {update_node_avps, InstA, [#{attribute => Attr, value => "green"}]}],
+	?assertEqual({ok, [ok, ok]}, graphdb_mgr:mutate(Batch)),
+	{ok, Rels} = graphdb_mgr:get_relationships(InstA),
+	?assertEqual([InstB],
+		[R#relationship.target_nref || R <- Rels,
+			R#relationship.characterization =:= Ch]),
+	[#node{attribute_value_pairs = AVPs}] = mnesia:dirty_read(nodes, InstA),
+	?assert(lists:member(#{attribute => Attr, value => "green"}, AVPs)).
+
+%%-----------------------------------------------------------------------------
+%% Atomic rollback: a valid add_relationship followed by an update_node_avps
+%% with an unknown attribute aborts the whole batch -- the relationship the
+%% first mutation wrote is absent.
+%%-----------------------------------------------------------------------------
+mutate_update_avps_rollback(_Config) ->
+	{ok, ClassNref} = graphdb_class:create_class("MUARbClass", 3),
+	{ok, InstA, _} = graphdb_instance:create_instance("MUARbA", ClassNref, 5),
+	{ok, InstB, _} = graphdb_instance:create_instance("MUARbB", ClassNref, 5),
+	{ok, {Ch, Re}} =
+		graphdb_attr:create_relationship_attribute_pair("MUARbk", "MUARbkb",
+			instance),
+	BadAttr = ?NREF_START + 888888,
+	Batch = [{add_relationship, InstA, Ch, InstB, Re},
+			 {update_node_avps, InstA, [#{attribute => BadAttr, value => 1}]}],
+	?assertEqual({error, {unknown_attribute, BadAttr}},
+		graphdb_mgr:mutate(Batch)),
+	{ok, Rels} = graphdb_mgr:get_relationships(InstA),
+	?assertEqual([],
+		[R#relationship.target_nref || R <- Rels,
+			R#relationship.characterization =:= Ch]).
+
+%%-----------------------------------------------------------------------------
+%% A malformed update_node_avps mutation is rejected in static validation
+%% ({error, {invalid_avp, _}}), before any transaction is opened.
+%%-----------------------------------------------------------------------------
+mutate_update_avps_malformed(_Config) ->
+	?assertEqual({error, {invalid_avp, "bad"}},
+		graphdb_mgr:mutate([{update_node_avps, 123, ["bad"]}])).
+
+%%-----------------------------------------------------------------------------
+%% A batch update_node_avps targeting a nonexistent node aborts {error,
+%% not_found} via the tier-1 primitive (mutate has no pre-txn category guard,
+%% so this is the path that exercises the tier-1 mnesia:abort(not_found)).
+%%-----------------------------------------------------------------------------
+mutate_update_avps_not_found(_Config) ->
+	{ok, Attr} = graphdb_attr:create_literal_attribute("MUANFAttr", string),
+	BadNref = ?NREF_START + 999999,
+	?assertEqual({error, not_found},
+		graphdb_mgr:mutate([{update_node_avps, BadNref,
+			[#{attribute => Attr, value => "x"}]}])).
+
+
+%%=============================================================================
+%% update_node_avps Tests (solo / tier-2 path)
+%%
+%% Full worker stack started in init_per_testcase. A runtime instance is the
+%% subject; a runtime literal attribute supplies a valid attribute nref.
+%%=============================================================================
+
+%% Helper: create a runtime class + instance + one literal attribute.
+%% Returns {InstNref, AttrNref}.
+ua_setup(Name) ->
+	{ok, ClassNref} = graphdb_class:create_class("UAClass" ++ Name, 3),
+	{ok, InstNref, _} =
+		graphdb_instance:create_instance("UAInst" ++ Name, ClassNref, 5),
+	{ok, AttrNref} =
+		graphdb_attr:create_literal_attribute("UAAttr" ++ Name, string),
+	{InstNref, AttrNref}.
+
+ua_avps(Nref) ->
+	[#node{attribute_value_pairs = AVPs}] = mnesia:dirty_read(nodes, Nref),
+	AVPs.
+
+ua_value(Nref, AttrNref) ->
+	AVPs = ua_avps(Nref),
+	case [V || #{attribute := A, value := V} <- AVPs, A =:= AttrNref] of
+		[V] -> V;
+		[]  -> not_found
+	end.
+
+%%-----------------------------------------------------------------------------
+%% Upsert a new attribute -> dirty_read reflects it.
+%%-----------------------------------------------------------------------------
+update_node_avps_upsert_roundtrip(_Config) ->
+	{Inst, Attr} = ua_setup("RT"),
+	?assertEqual(ok,
+		graphdb_mgr:update_node_avps(Inst, [#{attribute => Attr, value => "red"}])),
+	?assertEqual("red", ua_value(Inst, Attr)).
+
+%%-----------------------------------------------------------------------------
+%% Overwriting the name attribute keeps it at the head of the AVP list.
+%%-----------------------------------------------------------------------------
+update_node_avps_overwrite_preserves_head(_Config) ->
+	{Inst, _Attr} = ua_setup("Head"),
+	[#{attribute := NameAttr} | _] = ua_avps(Inst),
+	?assertEqual(ok,
+		graphdb_mgr:update_node_avps(Inst,
+			[#{attribute => NameAttr, value => "Renamed"}])),
+	[#{attribute := NameAttr, value := "Renamed"} | _] = ua_avps(Inst).
+
+%%-----------------------------------------------------------------------------
+%% A value-less map deletes the attribute.
+%%-----------------------------------------------------------------------------
+update_node_avps_delete(_Config) ->
+	{Inst, Attr} = ua_setup("Del"),
+	ok = graphdb_mgr:update_node_avps(Inst, [#{attribute => Attr, value => "x"}]),
+	?assertEqual("x", ua_value(Inst, Attr)),
+	?assertEqual(ok,
+		graphdb_mgr:update_node_avps(Inst, [#{attribute => Attr}])),
+	?assertEqual(not_found, ua_value(Inst, Attr)).
+
+%%-----------------------------------------------------------------------------
+%% Deleting an attribute the node does not carry is a no-op (still ok).
+%%-----------------------------------------------------------------------------
+update_node_avps_delete_absent_noop(_Config) ->
+	{Inst, Attr} = ua_setup("DelAbsent"),
+	Before = ua_avps(Inst),
+	?assertEqual(ok,
+		graphdb_mgr:update_node_avps(Inst, [#{attribute => Attr}])),
+	?assertEqual(Before, ua_avps(Inst)).
+
+%%-----------------------------------------------------------------------------
+%% value => undefined upserts a real (declared-but-unbound) entry, not a delete.
+%%-----------------------------------------------------------------------------
+update_node_avps_undefined_retained(_Config) ->
+	{Inst, Attr} = ua_setup("Undef"),
+	?assertEqual(ok,
+		graphdb_mgr:update_node_avps(Inst,
+			[#{attribute => Attr, value => undefined}])),
+	AVPs = ua_avps(Inst),
+	?assert(lists:member(#{attribute => Attr, value => undefined}, AVPs)).
+
+%%-----------------------------------------------------------------------------
+%% An upsert referencing a nonexistent attribute aborts {unknown_attribute, _}.
+%%-----------------------------------------------------------------------------
+update_node_avps_unknown_attribute(_Config) ->
+	{Inst, _Attr} = ua_setup("Unknown"),
+	BadAttr = ?NREF_START + 888888,
+	?assertEqual({error, {unknown_attribute, BadAttr}},
+		graphdb_mgr:update_node_avps(Inst, [#{attribute => BadAttr, value => 1}])).
+
+%%-----------------------------------------------------------------------------
+%% Targeting the seeded `retired` attribute is rejected -> use_retire_api.
+%%-----------------------------------------------------------------------------
+update_node_avps_retired_marker_rejected(_Config) ->
+	{Inst, _Attr} = ua_setup("Ret"),
+	{ok, #{retired := RetAttr}} = graphdb_attr:seeded_nrefs(),
+	?assertEqual({error, use_retire_api},
+		graphdb_mgr:update_node_avps(Inst,
+			[#{attribute => RetAttr, value => true}])).
+
+%%-----------------------------------------------------------------------------
+%% A nonexistent runtime node -> {error, not_found}.
+%%-----------------------------------------------------------------------------
+update_node_avps_not_found(_Config) ->
+	{_Inst, Attr} = ua_setup("NF"),
+	BadNref = ?NREF_START + 999999,
+	?assertEqual({error, not_found},
+		graphdb_mgr:update_node_avps(BadNref, [#{attribute => Attr, value => 1}])).
+
+%%-----------------------------------------------------------------------------
+%% A permanent-tier node -> {error, permanent_node_immutable}.
+%%-----------------------------------------------------------------------------
+update_node_avps_permanent_tier(_Config) ->
+	%% Nref 6 (Names) is a permanent-tier attribute node.
+	?assertEqual({error, permanent_node_immutable},
+		graphdb_mgr:update_node_avps(6, [#{attribute => 6, value => 1}])).
+
+%%-----------------------------------------------------------------------------
+%% Atomicity: a multi-AVP call where a later AVP aborts leaves the node
+%% unchanged (the earlier AVP in the same call is rolled back).
+%%-----------------------------------------------------------------------------
+update_node_avps_atomic_rollback(_Config) ->
+	{Inst, Attr} = ua_setup("Atomic"),
+	BadAttr = ?NREF_START + 888888,
+	?assertEqual({error, {unknown_attribute, BadAttr}},
+		graphdb_mgr:update_node_avps(Inst,
+			[#{attribute => Attr, value => "red"},
+			 #{attribute => BadAttr, value => "boom"}])),
+	?assertEqual(not_found, ua_value(Inst, Attr)).
