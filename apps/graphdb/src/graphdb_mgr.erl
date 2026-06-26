@@ -146,7 +146,9 @@
 -ifdef(TEST).
 -export([
 		validate_direction/1,
-		check_category_guard/1
+		check_category_guard/1,
+		validate_avp_updates/1,
+		apply_avp_updates/2
 		]).
 -endif.
 
@@ -734,6 +736,70 @@ is_retired_avp_present(#node{attribute_value_pairs = AVPs}, RetAttr) ->
 	lists:any(fun(#{attribute := A, value := true}) when A =:= RetAttr -> true;
 				 (_) -> false
 			  end, AVPs).
+
+
+%%-----------------------------------------------------------------------------
+%% validate_avp_updates(AVPs) -> ok | {error, {invalid_avp, term()}}
+%% Pure, client-side. AVPs must be a list whose every element is a map whose
+%% key set is exactly [attribute] (delete) or [attribute, value] (upsert),
+%% with an integer attribute. Anything else is {invalid_avp, Offender}.
+%%-----------------------------------------------------------------------------
+validate_avp_updates(AVPs) when is_list(AVPs) ->
+	validate_avp_updates_(AVPs);
+validate_avp_updates(Other) ->
+	{error, {invalid_avp, Other}}.
+
+validate_avp_updates_([]) ->
+	ok;
+validate_avp_updates_([M | Rest]) ->
+	case valid_avp_update(M) of
+		true  -> validate_avp_updates_(Rest);
+		false -> {error, {invalid_avp, M}}
+	end.
+
+valid_avp_update(#{attribute := A} = M) when is_integer(A) ->
+	case lists:sort(maps:keys(M)) of
+		[attribute]        -> true;   %% delete
+		[attribute, value] -> true;   %% upsert
+		_                  -> false
+	end;
+valid_avp_update(_) ->
+	false.
+
+%%-----------------------------------------------------------------------------
+%% apply_avp_updates(Existing, Updates) -> NewAVPs
+%% Pure. Folds each update over the AVP list, left-to-right:
+%%   - update map WITH a `value` key  -> upsert: replace the matching entry
+%%     in place if present, else append the new entry to the tail
+%%   - update map WITHOUT a `value` key -> delete that attribute (no-op if
+%%     absent)
+%% Precondition: Updates already passed validate_avp_updates/1.
+%%-----------------------------------------------------------------------------
+apply_avp_updates(Existing, Updates) ->
+	lists:foldl(fun apply_one_avp_update/2, Existing, Updates).
+
+apply_one_avp_update(#{attribute := A} = Update, AVPs) ->
+	case maps:is_key(value, Update) of
+		true  -> upsert_avp(AVPs, A, maps:get(value, Update));
+		false -> delete_avp(AVPs, A)
+	end.
+
+%% Replace the entry for A in place if present, else append to the tail.
+upsert_avp(AVPs, A, V) ->
+	New = #{attribute => A, value => V},
+	case lists:any(fun(P) -> is_avp_for(P, A) end, AVPs) of
+		true ->
+			[case is_avp_for(P, A) of true -> New; false -> P end
+				|| P <- AVPs];
+		false ->
+			AVPs ++ [New]
+	end.
+
+delete_avp(AVPs, A) ->
+	[P || P <- AVPs, not is_avp_for(P, A)].
+
+is_avp_for(#{attribute := A}, A) -> true;
+is_avp_for(_, _)                 -> false.
 
 
 %%-----------------------------------------------------------------------------
