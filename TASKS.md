@@ -324,14 +324,13 @@ node written. Design `docs/designs/slice-c-instance-only-qc-design.md`.
   Decide and document the intended contract before any caller comes to
   depend on the current behaviour.
 
-### Relationship mutation (slice E)
+### Relationship mutation (slice E) — IMPLEMENTED
 
-Design: `docs/designs/slice-e-relationship-mutation-design.md`.
+Design: `docs/designs/slice-e-relationship-mutation-design.md`; plan
+`docs/superpowers/plans/2026-06-28-slice-e-relationship-mutation.md`.
 
-Only `add_relationship` (create) exists today — there is no remove or
-update. Slice E adds, **connection-arcs only** (the exact mirror of
-`add_relationship`; no `parents`/`classes` cache work — connection arcs are
-never cached):
+Delivered, **connection-arcs only** (the exact mirror of `add_relationship`;
+no `parents`/`classes` cache work — connection arcs are never cached):
 
 - `remove_relationship/3,4` — atomically delete both directed rows of a
   logical connection edge. (The earlier note that it "fixes the caches" and

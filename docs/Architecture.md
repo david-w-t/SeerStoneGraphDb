@@ -213,6 +213,18 @@ it is forbidden on relationships of any other kind. Template nodes
 are compositional children of class nodes (see §3 cache field
 sources). API: `graphdb_instance:add_relationship/4,5`.
 
+Connection edges are mutated through `graphdb_instance`
+(connection-arcs only — these never touch the `parents`/`classes` caches):
+`remove_relationship/3,4` deletes **both** directed rows of a logical edge
+atomically; `update_relationship/4,5` and `update_relationship_both/4,5` edit
+the per-direction AVP metadata, reusing the slice-B AVP merge grammar. Remove
+is logical-edge-level; AVP update is directed-row-level (the `(S,C,T)` triple
+names one directed row — name `(T,R,S)` to edit the reverse). The `Template`
+AVP is protected from edit. Since nothing dedups connection edges at write
+time, a key matching more than one logical edge yields
+`{ambiguous_relationship, Templates}`; no match yields
+`relationship_not_found`.
+
 ---
 
 ## 5. Supervision Tree
@@ -264,8 +276,10 @@ workers — read path and soft-retire implemented; remaining write-side
 routing is pending (see [`../TASKS.md`](../TASKS.md)).
 
 The tier-3 batch entry point `graphdb_mgr:mutate/1` applies an ordered list
-of `add_relationship` / `retire_node` / `unretire_node` mutations atomically
-in one transaction, composing the tier-1 primitives directly.
+of `add_relationship` / `retire_node` / `unretire_node` / `update_node_avps` /
+`remove_relationship` / `update_relationship` / `update_relationship_both`
+mutations atomically in one transaction, composing the tier-1 primitives
+directly.
 
 ---
 

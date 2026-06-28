@@ -284,6 +284,25 @@ Creates and manages instance nodes in the project (instance space).
   its own txn). The caller allocates the rel-id pair up-front.
   `do_add_relationship/7` (tier-2) and `graphdb_mgr:mutate/1` (tier-3) both
   compose it into their single transaction.
+- `remove_relationship/3,4` (source, char, target [, template]) — deletes
+  **both** directed rows of a logical connection edge atomically
+  (connection-arcs only; no cache work). `/3` ignores template; `/4` narrows
+  by it. Identity contract: zero matches → `{error, relationship_not_found}`,
+  more than one (duplicate edges — nothing dedups at write time) →
+  `{error, {ambiguous_relationship, Templates}}`; a missing symmetric partner
+  aborts `{error, {dangling_half_edge, Id}}` (never deletes a half-edge).
+  Tier-1 `remove_relationship_in_txn/4` + shared `resolve_forward_connection/4`
+  resolver are the in-txn primitives (slice E).
+- `update_relationship/4,5` + `update_relationship_both/4,5` (source, char,
+  target [, template], Updates | {Fwd, Rev}) — AVP-only edit of an existing
+  connection edge, reusing slice B's `validate_avp_updates/1` +
+  `apply_avp_updates/2`. **Remove is edge-level; AVP update is
+  directed-row-level**: `update_relationship` edits the single row named by
+  `(S, C, T)` (edit the reverse by naming `(T, R, S)`); `*_both` edits both
+  directions with independent `{Fwd, Rev}` lists, composing the single tier-1
+  primitive `update_relationship_avps_in_txn/5` twice. The `?ARC_TEMPLATE`
+  scope AVP is protected from edit. Same not-found/ambiguity arms as remove
+  (slice E).
 - `add_class_membership/2` (instance_nref, class_nref) — adds a membership arc pair; also rejects a non-instantiable class target with `{error, {class_not_instantiable, ClassNref}}` (L9)
 - `get_instance/1`, `children/1`, `compositional_ancestors/1`, `resolve_value/2`
 
@@ -378,7 +397,8 @@ Single public entry point; delegates to the five specialized workers.
 - Rejects any runtime request to create, modify, or delete a `category` node with `{error, category_nodes_are_immutable}`
 - Sequences Nref allocation → record write → Nref confirmation
 - `mutate/1` — tier-3 batch entry point. Applies an ordered list of
-  `add_relationship` / `retire_node` / `unretire_node` / `update_node_avps`
+  `add_relationship` / `retire_node` / `unretire_node` / `update_node_avps` /
+  `remove_relationship` / `update_relationship` / `update_relationship_both`
   mutations atomically in one `transaction/1` (all commit or none). Tagged-tuple
   grammar; opaque bare-reason contract `{ok, [ok, ...]}` | `{error, Reason}`
   with whole-batch rollback; `mutate([]) -> {ok, []}`. A **plain function**, not
