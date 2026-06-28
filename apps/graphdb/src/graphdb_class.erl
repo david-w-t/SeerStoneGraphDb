@@ -480,47 +480,52 @@ is_valid_parent_kind(_)        -> false.
 %% nref/id allocation stays outside the transaction.
 %%-----------------------------------------------------------------------------
 do_create_class(Name, ParentClassNref, AVPs, InstAttr) ->
-	case do_validate_parent(ParentClassNref) of
-		ok ->
-			ClassNref        = graphdb_nref:get_next(),
-			{TaxId1, TaxId2} = rel_id_server:get_id_pair(),
-			ClassNameAVP = #{attribute => ?NAME_ATTR_CLASS, value => Name},
-			ClassNode = #node{
-				nref = ClassNref,
-				kind = class,
-				parents = [ParentClassNref],
-				attribute_value_pairs = [ClassNameAVP | AVPs]
-			},
-			TaxP2C = #relationship{
-				id = TaxId1, kind = taxonomy,
-				source_nref = ParentClassNref,
-				characterization = ?ARC_CLS_CHILD,
-				target_nref = ClassNref,
-				reciprocal = ?ARC_CLS_PARENT,
-				avps = []
-			},
-			TaxC2P = #relationship{
-				id = TaxId2, kind = taxonomy,
-				source_nref = ClassNref,
-				characterization = ?ARC_CLS_PARENT,
-				target_nref = ParentClassNref,
-				reciprocal = ?ARC_CLS_CHILD,
-				avps = []
-			},
-			TemplateRows = template_rows(ClassNref, AVPs, InstAttr),
-			Txn = fun() ->
-				ok = mnesia:write(nodes, ClassNode, write),
-				ok = mnesia:write(relationships, TaxP2C, write),
-				ok = mnesia:write(relationships, TaxC2P, write),
-				[ ok = mnesia:write(T, R, write) || {T, R} <- TemplateRows ]
-			end,
-			case graphdb_mgr:transaction(Txn) of
-				%% Txn value is [] (abstract) or [ok,ok,ok] (template rows)
-				{ok, _Writes}    -> {ok, ClassNref};
-				{error, _} = Err -> Err
-			end;
+	case validate_instance_only_avps(AVPs) of
 		{error, _} = Err ->
-			Err
+			Err;
+		ok ->
+			case do_validate_parent(ParentClassNref) of
+				ok ->
+					ClassNref        = graphdb_nref:get_next(),
+					{TaxId1, TaxId2} = rel_id_server:get_id_pair(),
+					ClassNameAVP = #{attribute => ?NAME_ATTR_CLASS, value => Name},
+					ClassNode = #node{
+						nref = ClassNref,
+						kind = class,
+						parents = [ParentClassNref],
+						attribute_value_pairs = [ClassNameAVP | AVPs]
+					},
+					TaxP2C = #relationship{
+						id = TaxId1, kind = taxonomy,
+						source_nref = ParentClassNref,
+						characterization = ?ARC_CLS_CHILD,
+						target_nref = ClassNref,
+						reciprocal = ?ARC_CLS_PARENT,
+						avps = []
+					},
+					TaxC2P = #relationship{
+						id = TaxId2, kind = taxonomy,
+						source_nref = ClassNref,
+						characterization = ?ARC_CLS_PARENT,
+						target_nref = ParentClassNref,
+						reciprocal = ?ARC_CLS_CHILD,
+						avps = []
+					},
+					TemplateRows = template_rows(ClassNref, AVPs, InstAttr),
+					Txn = fun() ->
+						ok = mnesia:write(nodes, ClassNode, write),
+						ok = mnesia:write(relationships, TaxP2C, write),
+						ok = mnesia:write(relationships, TaxC2P, write),
+						[ ok = mnesia:write(T, R, write) || {T, R} <- TemplateRows ]
+					end,
+					case graphdb_mgr:transaction(Txn) of
+						%% Txn value is [] (abstract) or [ok,ok,ok] (template rows)
+						{ok, _Writes}    -> {ok, ClassNref};
+						{error, _} = Err -> Err
+					end;
+				{error, _} = Err ->
+					Err
+			end
 	end.
 
 

@@ -66,6 +66,8 @@
 	create_class_auto_creates_default_template/1,
 	create_class_3_default_avps_empty/1,
 	create_class_3_writes_avps/1,
+	create_class_3_rejects_instance_only_with_value/1,
+	create_class_3_accepts_instance_only_unbound/1,
 	create_abstract_class_skips_default_template/1,
 	instantiable_class_keeps_default_template/1,
 	is_instantiable_true_false/1,
@@ -160,6 +162,8 @@ groups() ->
 			create_class_auto_creates_default_template,
 			create_class_3_default_avps_empty,
 			create_class_3_writes_avps,
+			create_class_3_rejects_instance_only_with_value,
+			create_class_3_accepts_instance_only_unbound,
 			create_abstract_class_skips_default_template,
 			instantiable_class_keeps_default_template,
 			is_instantiable_true_false
@@ -445,6 +449,28 @@ create_class_3_writes_avps(_Config) ->
 	?assert(lists:member(#{attribute => ?NAME_ATTR_CLASS, value => "Tagged"},
 		Node#node.attribute_value_pairs)),
 	?assert(lists:member(Extra, Node#node.attribute_value_pairs)).
+
+
+%%-----------------------------------------------------------------------------
+%% create_class/3 rejects an initial AVP that is instance_only AND bound.
+%%-----------------------------------------------------------------------------
+create_class_3_rejects_instance_only_with_value(_Config) ->
+	{ok, _} = graphdb_class:start_link(),
+	{ok, AttrN} = graphdb_attr:create_literal_attribute("serial", string),
+	Bad = #{attribute => AttrN, value => "SN-1", instance_only => true},
+	?assertEqual({error, {instance_only_attribute, AttrN}},
+		graphdb_class:create_class("Bad", 3, [Bad])).
+
+%%-----------------------------------------------------------------------------
+%% create_class/3 accepts an instance_only QC declared unbound.
+%%-----------------------------------------------------------------------------
+create_class_3_accepts_instance_only_unbound(_Config) ->
+	{ok, _} = graphdb_class:start_link(),
+	{ok, AttrN} = graphdb_attr:create_literal_attribute("serial", string),
+	Good = #{attribute => AttrN, value => undefined, instance_only => true},
+	{ok, ClassNref} = graphdb_class:create_class("Good", 3, [Good]),
+	{ok, Node} = graphdb_class:get_class(ClassNref),
+	?assert(lists:member(Good, Node#node.attribute_value_pairs)).
 
 
 %%-----------------------------------------------------------------------------
