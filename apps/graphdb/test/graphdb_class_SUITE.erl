@@ -108,6 +108,8 @@
 	bind_qc_value_basic/1,
 	bind_qc_value_undeclared_qc/1,
 	bind_qc_value_updates_existing_binding/1,
+	add_qc_3_stamps_instance_only_marker/1,
+	add_qc_3_idempotent_does_not_upgrade/1,
 	%% Lookups
 	get_class_returns_node/1,
 	get_class_not_found/1,
@@ -201,7 +203,9 @@ groups() ->
 			add_qc_rejects_non_attribute,
 			bind_qc_value_basic,
 			bind_qc_value_undeclared_qc,
-			bind_qc_value_updates_existing_binding
+			bind_qc_value_updates_existing_binding,
+			add_qc_3_stamps_instance_only_marker,
+			add_qc_3_idempotent_does_not_upgrade
 		]},
 		{lookups, [], [
 			get_class_returns_node,
@@ -926,6 +930,40 @@ bind_qc_value_updates_existing_binding(_Config) ->
 	{ok, QCs}   = graphdb_class:inherited_qcs(Veh),
 	?assert(lists:member({AttrN, 4000}, QCs)),
 	?assertNot(lists:member({AttrN, 3500}, QCs)).
+
+%%-----------------------------------------------------------------------------
+%% add_qualifying_characteristic/3 with #{instance_only => true} stamps the
+%% marker onto the class node's QC AVP.
+%%-----------------------------------------------------------------------------
+add_qc_3_stamps_instance_only_marker(_Config) ->
+	{ok, _} = graphdb_class:start_link(),
+	{ok, Veh}   = graphdb_class:create_class("Vehicle", ?NREF_CLASSES),
+	{ok, AttrN} = graphdb_attr:create_literal_attribute("serial", string),
+	ok = graphdb_class:add_qualifying_characteristic(Veh, AttrN,
+		#{instance_only => true}),
+	{ok, Node} = graphdb_class:get_class(Veh),
+	?assert(lists:member(
+		#{attribute => AttrN, value => undefined, instance_only => true},
+		Node#node.attribute_value_pairs)).
+
+%%-----------------------------------------------------------------------------
+%% Idempotency: /3 with instance_only on an already-declared UNFLAGGED QC is
+%% a no-op — it returns ok but does NOT upgrade the stored entry.
+%%-----------------------------------------------------------------------------
+add_qc_3_idempotent_does_not_upgrade(_Config) ->
+	{ok, _} = graphdb_class:start_link(),
+	{ok, Veh}   = graphdb_class:create_class("Vehicle", ?NREF_CLASSES),
+	{ok, AttrN} = graphdb_attr:create_literal_attribute("serial", string),
+	ok = graphdb_class:add_qualifying_characteristic(Veh, AttrN),
+	ok = graphdb_class:add_qualifying_characteristic(Veh, AttrN,
+		#{instance_only => true}),
+	{ok, Node} = graphdb_class:get_class(Veh),
+	%% The original unflagged entry is preserved; no marked variant appears.
+	?assert(lists:member(#{attribute => AttrN, value => undefined},
+		Node#node.attribute_value_pairs)),
+	?assertNot(lists:member(
+		#{attribute => AttrN, value => undefined, instance_only => true},
+		Node#node.attribute_value_pairs)).
 
 
 %%=============================================================================

@@ -112,6 +112,7 @@
 		create_class/3,
 		add_superclass/2,
 		add_qualifying_characteristic/2,
+		add_qualifying_characteristic/3,
 		bind_qc_value/3,
 		add_template/2,
 		%% Lookups
@@ -233,6 +234,10 @@ add_template(ClassNref, Name) ->
 %%-----------------------------------------------------------------------------
 add_qualifying_characteristic(ClassNref, AttrNref) ->
 	gen_server:call(?MODULE, {add_qualifying_characteristic, ClassNref, AttrNref}).
+
+add_qualifying_characteristic(ClassNref, AttrNref, Opts) when is_map(Opts) ->
+	gen_server:call(?MODULE,
+		{add_qualifying_characteristic, ClassNref, AttrNref, Opts}).
 
 
 %%-----------------------------------------------------------------------------
@@ -371,6 +376,10 @@ handle_call({add_superclass, ClassNref, AdditionalParentNref}, _From, State) ->
 handle_call({add_qualifying_characteristic, ClassNref, AttrNref}, _From,
 		State) ->
 	{reply, do_add_qc(ClassNref, AttrNref), State};
+
+handle_call({add_qualifying_characteristic, ClassNref, AttrNref, Opts}, _From,
+		State) ->
+	{reply, do_add_qc(ClassNref, AttrNref, Opts), State};
 
 handle_call({bind_qc_value, ClassNref, AttrNref, Value}, _From, State) ->
 	{reply, do_bind_qc_value(ClassNref, AttrNref, Value), State};
@@ -969,14 +978,21 @@ do_validate_parent(Nref) ->
 
 %%-----------------------------------------------------------------------------
 %% do_add_qc(ClassNref, AttrNref) -> ok | {error, term()}
+%% do_add_qc(ClassNref, AttrNref, Opts) -> ok | {error, term()}
 %%
-%% Adds the qualifying-characteristic AVP to the class node using the
-%% unified shape: #{attribute => AttrNref, value => undefined}.
+%% Adds the qualifying-characteristic AVP to the class node.  /2 is the
+%% plain declared-unbound form (delegates to /3 with empty Opts).  /3
+%% accepts Opts = #{instance_only => true} to stamp the instance-only
+%% marker onto the canonical declared-unbound shape.
+%%
 %% Validates both ClassNref (must be class) and AttrNref (must be
 %% attribute).  Idempotent: if any entry for AttrNref already exists
-%% (regardless of value), leaves it alone and returns ok.
+%% (regardless of value or flags), leaves it alone and returns ok.
 %%-----------------------------------------------------------------------------
 do_add_qc(ClassNref, AttrNref) ->
+	do_add_qc(ClassNref, AttrNref, #{}).
+
+do_add_qc(ClassNref, AttrNref, Opts) ->
 	Txn = fun() ->
 		case mnesia:read(nodes, ClassNref) of
 			[#node{kind = class, attribute_value_pairs = AVPs} = Node] ->
@@ -989,8 +1005,7 @@ do_add_qc(ClassNref, AttrNref) ->
 							true ->
 								already_exists;
 							false ->
-								NewAVP = #{attribute => AttrNref,
-									value => undefined},
+								NewAVP = new_qc_avp(AttrNref, Opts),
 								Updated = Node#node{
 									attribute_value_pairs = AVPs ++ [NewAVP]
 								},
@@ -1013,6 +1028,20 @@ do_add_qc(ClassNref, AttrNref) ->
 		{ok, already_exists} -> ok;
 		{ok, {error, _} = E} -> E;
 		{error, Reason}      -> {error, Reason}
+	end.
+
+%%-----------------------------------------------------------------------------
+%% new_qc_avp(AttrNref, Opts) -> map()
+%%
+%% Builds the QC AVP for a fresh declaration.  `instance_only => true` in
+%% Opts stamps the marker onto the canonical declared-unbound shape;
+%% otherwise the plain declared-unbound shape is returned.
+%%-----------------------------------------------------------------------------
+new_qc_avp(AttrNref, Opts) ->
+	Base = #{attribute => AttrNref, value => undefined},
+	case maps:get(instance_only, Opts, false) of
+		true  -> Base#{instance_only => true};
+		false -> Base
 	end.
 
 
