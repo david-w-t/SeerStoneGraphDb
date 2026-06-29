@@ -128,6 +128,18 @@
 		add_class_membership/2,
 		%% Tier-1 in-transaction primitive (write-path seam)
 		add_relationship_in_txn/9,
+		remove_relationship/3,
+		remove_relationship/4,
+		remove_relationship_in_txn/4,
+		resolve_forward_connection/4,
+		template_of/1,
+		update_relationship/4,
+		update_relationship/5,
+		update_relationship_avps_in_txn/5,
+		has_template_update/1,
+		update_relationship_both/4,
+		update_relationship_both/5,
+		update_relationship_both_in_txn/6,
 		%% Lookups
 		get_instance/1,
 		children/1,
@@ -1234,6 +1246,233 @@ add_relationship_in_txn({_Id1, _Id2} = IdPair, SourceNref, CharNref,
 		ReciprocalNref, TemplateNref, AVPSpec),
 	lists:foreach(fun({Tab, Rec}) -> ok = mnesia:write(Tab, Rec, write) end,
 		Rows).
+
+
+%%-----------------------------------------------------------------------------
+%% resolve_forward_connection(SourceNref, CharNref, TargetNref, TemplateSpec)
+%%   -> {ok, #relationship{}} | not_found | {ambiguous, [TemplateNref]}
+%%
+%% Tier-1 in-transaction helper.  Finds the directed connection row(s) whose
+%% (source, characterization, target) match, narrowed by TemplateSpec
+%% (`any` = ignore template; an integer = match that template AVP).  Classifies
+%% none / exactly-one / many; the ambiguous case carries each matching row's
+%% template so a /3 caller can re-issue as /4.  Reads only; never aborts.
+%%-----------------------------------------------------------------------------
+resolve_forward_connection(SourceNref, CharNref, TargetNref, TemplateSpec) ->
+	Rows = mnesia:index_read(relationships, SourceNref,
+		#relationship.source_nref),
+	Matches = [R || R <- Rows,
+		R#relationship.kind =:= connection,
+		R#relationship.characterization =:= CharNref,
+		R#relationship.target_nref =:= TargetNref,
+		template_matches(R, TemplateSpec)],
+	case Matches of
+		[]        -> not_found;
+		[Row]     -> {ok, Row};
+		Many      -> {ambiguous, [template_of(R) || R <- Many]}
+	end.
+
+template_matches(_Row, any) ->
+	true;
+template_matches(Row, TemplateNref) ->
+	template_of(Row) =:= TemplateNref.
+
+%% The Template AVP rides on a connection row's avps.
+template_of(#relationship{avps = AVPs}) ->
+	case find_avp_value(AVPs, ?ARC_TEMPLATE) of
+		{ok, V}   -> V;
+		not_found -> undefined
+	end.
+
+%%-----------------------------------------------------------------------------
+%% remove_relationship_in_txn(SourceNref, CharNref, TargetNref, TemplateSpec)
+%%   -> ok    (aborts the enclosing transaction on any failure)
+%%
+%% Tier-1 primitive.  Must run inside an active mnesia transaction; never opens
+%% its own.  Resolves the forward row (relationship_not_found /
+%% {ambiguous_relationship, Templates}), locates its symmetric partner
+%% (T, R, S) under the same concrete template, and deletes both rows.  A
+%% missing partner is an integrity violation -- aborts {dangling_half_edge, Id}
+%% rather than deleting a half-edge.  Used by remove_relationship/3,4 (tier-2)
+%% and graphdb_mgr:mutate/1 (tier-3).
+%%-----------------------------------------------------------------------------
+remove_relationship_in_txn(SourceNref, CharNref, TargetNref, TemplateSpec) ->
+	case resolve_forward_connection(SourceNref, CharNref, TargetNref,
+			TemplateSpec) of
+		not_found ->
+			mnesia:abort(relationship_not_found);
+		{ambiguous, Templates} ->
+			mnesia:abort({ambiguous_relationship, Templates});
+		{ok, Fwd} ->
+			Recip = Fwd#relationship.reciprocal,
+			Tmpl  = template_of(Fwd),
+			case resolve_forward_connection(TargetNref, Recip, SourceNref,
+					Tmpl) of
+				{ok, Rev} ->
+					ok = mnesia:delete_object(relationships, Fwd, write),
+					ok = mnesia:delete_object(relationships, Rev, write);
+				_ ->
+					mnesia:abort({dangling_half_edge, Fwd#relationship.id})
+			end
+	end.
+
+%%-----------------------------------------------------------------------------
+%% remove_relationship(SourceNref, CharNref, TargetNref) -> ok | {error, term()}
+%% remove_relationship(SourceNref, CharNref, TargetNref, TemplateNref)
+%%   -> ok | {error, term()}
+%%
+%% Tier-2 public API: deletes both directed rows of a logical connection edge
+%% atomically.  /3 ignores template (ambiguous if two templates match); /4
+%% narrows by an explicit template.  Plain functions owning one
+%% graphdb_mgr:transaction/1 in the caller's process (no gen_server state).
+%%-----------------------------------------------------------------------------
+remove_relationship(SourceNref, CharNref, TargetNref) ->
+	txn_ok(fun() ->
+		remove_relationship_in_txn(SourceNref, CharNref, TargetNref, any)
+	end).
+
+remove_relationship(SourceNref, CharNref, TargetNref, TemplateNref)
+		when is_integer(TemplateNref) ->
+	txn_ok(fun() ->
+		remove_relationship_in_txn(SourceNref, CharNref, TargetNref,
+			TemplateNref)
+	end).
+
+%% Run an in-txn primitive in one transaction; normalise {ok, _} -> ok.
+txn_ok(Fun) ->
+	case graphdb_mgr:transaction(Fun) of
+		{ok, _}          -> ok;
+		{error, _} = Err -> Err
+	end.
+
+%%-----------------------------------------------------------------------------
+%% update_relationship_avps_in_txn(S, C, T, TemplateSpec, Updates) -> ok
+%%   (aborts the enclosing transaction on any failure)
+%%
+%% Tier-1 primitive: edits the AVPs of the SINGLE directed connection row named
+%% by (S, C, T) (narrowed by TemplateSpec).  Reuses slice B's pure
+%% apply_avp_updates/2 (merge/upsert/delete).  The ?ARC_TEMPLATE scope AVP is
+%% protected -- any update targeting it aborts.  Same not-found / ambiguity
+%% arms as remove.  The Template AVP at index 0 survives because no update may
+%% reference it.
+%%-----------------------------------------------------------------------------
+update_relationship_avps_in_txn(SourceNref, CharNref, TargetNref, TemplateSpec,
+		Updates) ->
+	case has_template_update(Updates) of
+		true ->
+			mnesia:abort({protected_relationship_avp, ?ARC_TEMPLATE});
+		false ->
+			case resolve_forward_connection(SourceNref, CharNref, TargetNref,
+					TemplateSpec) of
+				not_found ->
+					mnesia:abort(relationship_not_found);
+				{ambiguous, Templates} ->
+					mnesia:abort({ambiguous_relationship, Templates});
+				{ok, Row} ->
+					New = graphdb_mgr:apply_avp_updates(
+						Row#relationship.avps, Updates),
+					mnesia:write(relationships,
+						Row#relationship{avps = New}, write)
+			end
+	end.
+
+%% True iff any update map targets the protected ?ARC_TEMPLATE scope AVP.
+has_template_update(Updates) ->
+	lists:any(fun(#{attribute := A}) -> A =:= ?ARC_TEMPLATE end, Updates).
+
+%%-----------------------------------------------------------------------------
+%% update_relationship(S, C, T, Updates) -> ok | {error, term()}
+%% update_relationship(S, C, T, TemplateNref, Updates) -> ok | {error, term()}
+%%
+%% Tier-2 public API: AVP-only edit of the single directed row named by
+%% (S, C, T).  Validates the update grammar client-side (slice B), then owns
+%% one transaction.
+%%-----------------------------------------------------------------------------
+update_relationship(SourceNref, CharNref, TargetNref, Updates) ->
+	do_update_relationship(SourceNref, CharNref, TargetNref, any, Updates).
+
+update_relationship(SourceNref, CharNref, TargetNref, TemplateNref, Updates)
+		when is_integer(TemplateNref) ->
+	do_update_relationship(SourceNref, CharNref, TargetNref, TemplateNref,
+		Updates).
+
+do_update_relationship(SourceNref, CharNref, TargetNref, TemplateSpec,
+		Updates) ->
+	case graphdb_mgr:validate_avp_updates(Updates) of
+		ok ->
+			txn_ok(fun() ->
+				update_relationship_avps_in_txn(SourceNref, CharNref,
+					TargetNref, TemplateSpec, Updates)
+			end);
+		{error, _} = Err ->
+			Err
+	end.
+
+%%-----------------------------------------------------------------------------
+%% update_relationship_both_in_txn(S, C, T, TemplateSpec, FwdUpdates,
+%%   RevUpdates) -> ok    (aborts the enclosing transaction on any failure)
+%%
+%% Tier-1 composite: resolves the forward row to discover the reciprocal label
+%% and the concrete template, then edits both directed rows -- FwdUpdates on
+%% (S, C, T), RevUpdates on (T, R, S) -- EACH through the single-edge primitive
+%% (update_relationship_avps_in_txn/5).  Reused by the tier-2 wrappers and by
+%% graphdb_mgr:mutate/1.  The two directions' updates are independent.
+%%-----------------------------------------------------------------------------
+update_relationship_both_in_txn(SourceNref, CharNref, TargetNref, TemplateSpec,
+		FwdUpdates, RevUpdates) ->
+	case resolve_forward_connection(SourceNref, CharNref, TargetNref,
+			TemplateSpec) of
+		not_found ->
+			mnesia:abort(relationship_not_found);
+		{ambiguous, Templates} ->
+			mnesia:abort({ambiguous_relationship, Templates});
+		{ok, Fwd} ->
+			Recip = Fwd#relationship.reciprocal,
+			Tmpl  = template_of(Fwd),
+			%% Confirm the symmetric partner exists before editing either row,
+			%% so a corrupt half-edge surfaces {dangling_half_edge, Id} (the
+			%% same arm as remove) rather than a misleading relationship_not_found
+			%% from the second single-edge edit.
+			case resolve_forward_connection(TargetNref, Recip, SourceNref,
+					Tmpl) of
+				{ok, _Rev} ->
+					ok = update_relationship_avps_in_txn(SourceNref, CharNref,
+						TargetNref, Tmpl, FwdUpdates),
+					ok = update_relationship_avps_in_txn(TargetNref, Recip,
+						SourceNref, Tmpl, RevUpdates);
+				_ ->
+					mnesia:abort({dangling_half_edge, Fwd#relationship.id})
+			end
+	end.
+
+%%-----------------------------------------------------------------------------
+%% update_relationship_both(S, C, T, {FwdUpdates, RevUpdates})
+%%   -> ok | {error, term()}
+%% update_relationship_both(S, C, T, TemplateNref, {FwdUpdates, RevUpdates})
+%%   -> ok | {error, term()}
+%%
+%% Tier-2 convenience: edits both directions of one logical edge in a single
+%% transaction.  The two update lists are independent (forward need not mirror
+%% reverse).  Both lists are validated client-side (slice B grammar).
+%%-----------------------------------------------------------------------------
+update_relationship_both(SourceNref, CharNref, TargetNref, {Fwd, Rev}) ->
+	do_update_both(SourceNref, CharNref, TargetNref, any, Fwd, Rev).
+
+update_relationship_both(SourceNref, CharNref, TargetNref, TemplateNref,
+		{Fwd, Rev}) when is_integer(TemplateNref) ->
+	do_update_both(SourceNref, CharNref, TargetNref, TemplateNref, Fwd, Rev).
+
+do_update_both(SourceNref, CharNref, TargetNref, TemplateSpec, Fwd, Rev) ->
+	case {graphdb_mgr:validate_avp_updates(Fwd),
+		  graphdb_mgr:validate_avp_updates(Rev)} of
+		{ok, ok} ->
+			txn_ok(fun() ->
+				update_relationship_both_in_txn(SourceNref, CharNref,
+					TargetNref, TemplateSpec, Fwd, Rev)
+			end);
+		{{error, _} = Err, _} -> Err;
+		{_, {error, _} = Err} -> Err
+	end.
 
 
 %%-----------------------------------------------------------------------------
