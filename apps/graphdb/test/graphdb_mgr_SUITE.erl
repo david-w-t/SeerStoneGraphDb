@@ -694,7 +694,7 @@ create_class_delegates(_Config) ->
 %%-----------------------------------------------------------------------------
 create_instance_delegates(_Config) ->
 	{ok, ClassNref} = graphdb_class:create_class("TestClass2", 3),
-	{ok, Nref, _} = graphdb_mgr:create_instance("TestInst", ClassNref, 5),
+	{ok, Nref, _} = graphdb_mgr:create_instance(sess(), "TestInst", ClassNref, 5),
 	?assert(is_integer(Nref)),
 	{ok, Node} = graphdb_mgr:get_node(Nref),
 	?assertEqual(instance, Node#node.kind).
@@ -706,8 +706,8 @@ create_instance_delegates(_Config) ->
 add_relationship_delegates(_Config) ->
 	%% Create a class and two instances
 	{ok, ClassNref} = graphdb_class:create_class("RelClass", 3),
-	{ok, InstA, _} = graphdb_instance:create_instance("A", ClassNref, 5),
-	{ok, InstB, _} = graphdb_instance:create_instance("B", ClassNref, 5),
+	{ok, InstA, _} = graphdb_instance:create_instance(sess(), "A", ClassNref, 5),
+	{ok, InstB, _} = graphdb_instance:create_instance(sess(), "B", ClassNref, 5),
 	%% Create a reciprocal relationship attribute pair (char/reciprocal nrefs)
 	{ok, {CharNref, RecipNref}} =
 		graphdb_attr:create_relationship_attribute_pair("Knows", "KnownBy", instance),
@@ -1030,8 +1030,8 @@ mutate_empty_batch(_Config) ->
 %%-----------------------------------------------------------------------------
 mutate_single_add_relationship(_Config) ->
 	{ok, ClassNref} = graphdb_class:create_class("MClassAR", 3),
-	{ok, InstA, _} = graphdb_instance:create_instance("MA", ClassNref, 5),
-	{ok, InstB, _} = graphdb_instance:create_instance("MB", ClassNref, 5),
+	{ok, InstA, _} = graphdb_instance:create_instance(sess(), "MA", ClassNref, 5),
+	{ok, InstB, _} = graphdb_instance:create_instance(sess(), "MB", ClassNref, 5),
 	{ok, {CharNref, RecipNref}} =
 		graphdb_attr:create_relationship_attribute_pair("MKnows", "MKnownBy",
 			instance),
@@ -1067,9 +1067,9 @@ mutate_single_retire_and_unretire(_Config) ->
 %%-----------------------------------------------------------------------------
 mutate_mixed_all_succeed(_Config) ->
 	{ok, ClassNref} = graphdb_class:create_class("MMixed", 3),
-	{ok, InstA, _} = graphdb_instance:create_instance("MMA", ClassNref, 5),
-	{ok, InstB, _} = graphdb_instance:create_instance("MMB", ClassNref, 5),
-	{ok, InstC, _} = graphdb_instance:create_instance("MMC", ClassNref, 5),
+	{ok, InstA, _} = graphdb_instance:create_instance(sess(), "MMA", ClassNref, 5),
+	{ok, InstB, _} = graphdb_instance:create_instance(sess(), "MMB", ClassNref, 5),
+	{ok, InstC, _} = graphdb_instance:create_instance(sess(), "MMC", ClassNref, 5),
 	{ok, {Ch1, Re1}} =
 		graphdb_attr:create_relationship_attribute_pair("MM1", "MM1r", instance),
 	{ok, {Ch2, Re2}} =
@@ -1093,8 +1093,8 @@ mutate_mixed_all_succeed(_Config) ->
 %%-----------------------------------------------------------------------------
 mutate_atomic_rollback(_Config) ->
 	{ok, ClassNref} = graphdb_class:create_class("MRollback", 3),
-	{ok, InstA, _} = graphdb_instance:create_instance("MRA", ClassNref, 5),
-	{ok, InstB, _} = graphdb_instance:create_instance("MRB", ClassNref, 5),
+	{ok, InstA, _} = graphdb_instance:create_instance(sess(), "MRA", ClassNref, 5),
+	{ok, InstB, _} = graphdb_instance:create_instance(sess(), "MRB", ClassNref, 5),
 	{ok, {CharNref, RecipNref}} =
 		graphdb_attr:create_relationship_attribute_pair("MRKnows", "MRKnownBy",
 			instance),
@@ -1115,8 +1115,8 @@ mutate_atomic_rollback(_Config) ->
 %%-----------------------------------------------------------------------------
 mutate_read_your_writes_rollback(_Config) ->
 	{ok, ClassNref} = graphdb_class:create_class("MRYW", 3),
-	{ok, InstA, _} = graphdb_instance:create_instance("MRYWA", ClassNref, 5),
-	{ok, InstB, _} = graphdb_instance:create_instance("MRYWB", ClassNref, 5),
+	{ok, InstA, _} = graphdb_instance:create_instance(sess(), "MRYWA", ClassNref, 5),
+	{ok, InstB, _} = graphdb_instance:create_instance(sess(), "MRYWB", ClassNref, 5),
 	{ok, {CharNref, RecipNref}} =
 		graphdb_attr:create_relationship_attribute_pair("MRYWK", "MRYWKr",
 			instance),
@@ -1135,8 +1135,8 @@ mutate_read_your_writes_rollback(_Config) ->
 %%-----------------------------------------------------------------------------
 mutate_malformed_term(_Config) ->
 	{ok, ClassNref} = graphdb_class:create_class("MBad", 3),
-	{ok, InstA, _} = graphdb_instance:create_instance("MBadA", ClassNref, 5),
-	{ok, InstB, _} = graphdb_instance:create_instance("MBadB", ClassNref, 5),
+	{ok, InstA, _} = graphdb_instance:create_instance(sess(), "MBadA", ClassNref, 5),
+	{ok, InstB, _} = graphdb_instance:create_instance(sess(), "MBadB", ClassNref, 5),
 	{ok, {CharNref, RecipNref}} =
 		graphdb_attr:create_relationship_attribute_pair("MBadK", "MBadKr",
 			instance),
@@ -1170,8 +1170,8 @@ mutate_permanent_tier_guard(_Config) ->
 mutate_add_relationship_explicit_template(_Config) ->
 	{ok, ClassNref} = graphdb_class:create_class("MTmplClass", 3),
 	{ok, AltTmpl} = graphdb_class:add_template(ClassNref, "msocial"),
-	{ok, A, _} = graphdb_instance:create_instance("MTA", ClassNref, 5),
-	{ok, B, _} = graphdb_instance:create_instance("MTB", ClassNref, 5),
+	{ok, A, _} = graphdb_instance:create_instance(sess(), "MTA", ClassNref, 5),
+	{ok, B, _} = graphdb_instance:create_instance(sess(), "MTB", ClassNref, 5),
 	{ok, {Char, Recip}} =
 		graphdb_attr:create_relationship_attribute_pair("MTKnows", "MTKnownBy",
 			instance),
@@ -1195,8 +1195,8 @@ mutate_add_relationship_explicit_template(_Config) ->
 mutate_add_relationship_with_avps(_Config) ->
 	{ok, ClassNref} = graphdb_class:create_class("MAvpClass", 3),
 	{ok, DefaultTmpl} = graphdb_class:default_template(ClassNref),
-	{ok, A, _} = graphdb_instance:create_instance("MAvA", ClassNref, 5),
-	{ok, B, _} = graphdb_instance:create_instance("MAvB", ClassNref, 5),
+	{ok, A, _} = graphdb_instance:create_instance(sess(), "MAvA", ClassNref, 5),
+	{ok, B, _} = graphdb_instance:create_instance(sess(), "MAvB", ClassNref, 5),
 	{ok, {Char, Recip}} =
 		graphdb_attr:create_relationship_attribute_pair("MAvKnows", "MAvKnownBy",
 			instance),
@@ -1231,7 +1231,7 @@ mutate_add_relationship_with_avps(_Config) ->
 %%-----------------------------------------------------------------------------
 mutate_single_update_node_avps(_Config) ->
 	{ok, ClassNref} = graphdb_class:create_class("MUAClass", 3),
-	{ok, Inst, _} = graphdb_instance:create_instance("MUAInst", ClassNref, 5),
+	{ok, Inst, _} = graphdb_instance:create_instance(sess(), "MUAInst", ClassNref, 5),
 	{ok, Attr} = graphdb_attr:create_literal_attribute("MUAAttr", string),
 	?assertEqual({ok, [ok]},
 		graphdb_mgr:mutate([{update_node_avps, Inst,
@@ -1244,8 +1244,8 @@ mutate_single_update_node_avps(_Config) ->
 %%-----------------------------------------------------------------------------
 mutate_mixed_add_rel_and_update_avps(_Config) ->
 	{ok, ClassNref} = graphdb_class:create_class("MMUAClass", 3),
-	{ok, InstA, _} = graphdb_instance:create_instance("MMUAA", ClassNref, 5),
-	{ok, InstB, _} = graphdb_instance:create_instance("MMUAB", ClassNref, 5),
+	{ok, InstA, _} = graphdb_instance:create_instance(sess(), "MMUAA", ClassNref, 5),
+	{ok, InstB, _} = graphdb_instance:create_instance(sess(), "MMUAB", ClassNref, 5),
 	{ok, {Ch, Re}} =
 		graphdb_attr:create_relationship_attribute_pair("MMUAk", "MMUAkb",
 			instance),
@@ -1267,8 +1267,8 @@ mutate_mixed_add_rel_and_update_avps(_Config) ->
 %%-----------------------------------------------------------------------------
 mutate_update_avps_rollback(_Config) ->
 	{ok, ClassNref} = graphdb_class:create_class("MUARbClass", 3),
-	{ok, InstA, _} = graphdb_instance:create_instance("MUARbA", ClassNref, 5),
-	{ok, InstB, _} = graphdb_instance:create_instance("MUARbB", ClassNref, 5),
+	{ok, InstA, _} = graphdb_instance:create_instance(sess(), "MUARbA", ClassNref, 5),
+	{ok, InstB, _} = graphdb_instance:create_instance(sess(), "MUARbB", ClassNref, 5),
 	{ok, {Ch, Re}} =
 		graphdb_attr:create_relationship_attribute_pair("MUARbk", "MUARbkb",
 			instance),
@@ -1315,7 +1315,7 @@ mutate_update_avps_not_found(_Config) ->
 ua_setup(Name) ->
 	{ok, ClassNref} = graphdb_class:create_class("UAClass" ++ Name, 3),
 	{ok, InstNref, _} =
-		graphdb_instance:create_instance("UAInst" ++ Name, ClassNref, 5),
+		graphdb_instance:create_instance(sess(), "UAInst" ++ Name, ClassNref, 5),
 	{ok, AttrNref} =
 		graphdb_attr:create_literal_attribute("UAAttr" ++ Name, string),
 	{InstNref, AttrNref}.
@@ -1488,8 +1488,8 @@ mutate_conn_count(Source, Char, Target) ->
 
 mutate_remove_relationship(_Config) ->
 	{ok, Class}   = graphdb_class:create_class("MRemoveOrg", 3),
-	{ok, A, _} = graphdb_instance:create_instance("MRA", Class, 5),
-	{ok, B, _} = graphdb_instance:create_instance("MRB", Class, 5),
+	{ok, A, _} = graphdb_instance:create_instance(sess(), "MRA", Class, 5),
+	{ok, B, _} = graphdb_instance:create_instance(sess(), "MRB", Class, 5),
 	{ok, {Char, Recip}} =
 		graphdb_attr:create_relationship_attribute_pair("MRKnows", "MRKnownBy",
 			instance),
@@ -1503,8 +1503,8 @@ mutate_remove_relationship(_Config) ->
 
 mutate_update_relationship(_Config) ->
 	{ok, Class}   = graphdb_class:create_class("MUpdOrg", 3),
-	{ok, A, _} = graphdb_instance:create_instance("MUA", Class, 5),
-	{ok, B, _} = graphdb_instance:create_instance("MUB", Class, 5),
+	{ok, A, _} = graphdb_instance:create_instance(sess(), "MUA", Class, 5),
+	{ok, B, _} = graphdb_instance:create_instance(sess(), "MUB", Class, 5),
 	{ok, {Char, Recip}} =
 		graphdb_attr:create_relationship_attribute_pair("MUKnows", "MUKnownBy",
 			instance),
@@ -1519,8 +1519,8 @@ mutate_update_relationship(_Config) ->
 
 mutate_mixed_rollback(_Config) ->
 	{ok, Class}   = graphdb_class:create_class("MMixOrg", 3),
-	{ok, A, _} = graphdb_instance:create_instance("MMA", Class, 5),
-	{ok, B, _} = graphdb_instance:create_instance("MMB", Class, 5),
+	{ok, A, _} = graphdb_instance:create_instance(sess(), "MMA", Class, 5),
+	{ok, B, _} = graphdb_instance:create_instance(sess(), "MMB", Class, 5),
 	{ok, {Char, Recip}} =
 		graphdb_attr:create_relationship_attribute_pair("MMKnows", "MMKnownBy",
 			instance),

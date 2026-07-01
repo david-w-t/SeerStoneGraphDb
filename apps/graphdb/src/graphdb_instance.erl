@@ -122,9 +122,9 @@
 -export([
 		start_link/0,
 		%% Creators
-		create_instance/3,
 		create_instance/4,
 		create_instance/5,
+		create_instance/6,
 		add_relationship/5,
 		add_relationship/6,
 		add_relationship/7,
@@ -204,8 +204,8 @@ start_link() ->
 %%   - instance→class membership arc pair (char=29/30)
 %%   - compositional parent→child arc pair (char=28/27)
 %%-----------------------------------------------------------------------------
-create_instance(Name, ClassNref, ParentNref) ->
-	create_instance(Name, ClassNref, ParentNref, fun report_only/1).
+create_instance(Session, Name, ClassNref, ParentNref) ->
+	create_instance(Session, Name, ClassNref, ParentNref, fun report_only/1).
 
 %%-----------------------------------------------------------------------------
 %% create_instance(Name, ClassNref, ParentNref, ConnResolver) ->
@@ -216,9 +216,9 @@ create_instance(Name, ClassNref, ParentNref) ->
 %% outcome and nothing is connected.  /4 supplies the built-in default
 %% conflict resolver.
 %%-----------------------------------------------------------------------------
-create_instance(Name, ClassNref, ParentNref, ConnResolver)
+create_instance(Session, Name, ClassNref, ParentNref, ConnResolver)
 		when is_function(ConnResolver, 1) ->
-	create_instance(Name, ClassNref, ParentNref, ConnResolver,
+	create_instance(Session, Name, ClassNref, ParentNref, ConnResolver,
 					graphdb_rules:default_conflict_resolver()).
 
 %%-----------------------------------------------------------------------------
@@ -229,11 +229,14 @@ create_instance(Name, ClassNref, ParentNref, ConnResolver)
 %% in the CALLER's process (where seeded_nrefs/0 is safe) and applied per
 %% cascade level for composition rules and per plan node for connection rules.
 %%-----------------------------------------------------------------------------
-create_instance(Name, ClassNref, ParentNref, ConnResolver, ConflictResolver)
+create_instance(Session, Name, ClassNref, ParentNref, ConnResolver,
+		ConflictResolver)
 		when is_function(ConnResolver, 1), is_function(ConflictResolver, 1) ->
-	gen_server:call(?MODULE,
-		{create_instance, Name, ClassNref, ParentNref, ConnResolver,
-		 ConflictResolver}).
+	with_session(Session, fun() ->
+		gen_server:call(?MODULE,
+			{create_instance, Name, ClassNref, ParentNref, ConnResolver,
+			 ConflictResolver})
+	end).
 
 %% report_only(ConnContext) -> defer   (the built-in /3 resolver)
 report_only(_Ctx) -> defer.
