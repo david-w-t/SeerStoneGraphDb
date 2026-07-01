@@ -227,3 +227,20 @@ split. Precise module layout is settled in the implementation plan.
   project privacy.
 - **Session unification** — whether the project-session and the
   `graphdb_query` session converge into one concept.
+- **Multi-project sessions (forward compatibility)** — SP1 binds a session to
+  a single project, but nothing forecloses several. The session value is
+  **fully encapsulated**: only `graphdb_project` constructs and inspects it
+  (`open_session/1`, `session_project/1`, `require_session/1`); every write op
+  gates through `require_session/1` and no code assumes single-project-ness, so
+  widening the shape (`project => Nref` → a working set + a current/default) is
+  a localized change. The remaining work is **semantic, not mechanical**, and
+  lands with SP2: (1) **write targeting** — which open project a new write lands
+  in (a `current`/default project plus a per-op override, or an explicit per-op
+  project); (2) **rule/overlay priority** — a declared precedence across open
+  projects (env → A → B), already anticipated in `TASKS.md` → *Multi-project
+  sessions*. Resolving **existing** data does **not** get harder: because no
+  structural reference crosses a project boundary (cross-project links are proxy
+  nodes), a row's project-local nrefs belong to its home project, so
+  reads/traversal stay well-defined per-row-home even with several projects
+  open. "Multiple open" is a working-set/targeting convenience for a principal
+  with access to each; it does not dissolve the isolation boundary.
