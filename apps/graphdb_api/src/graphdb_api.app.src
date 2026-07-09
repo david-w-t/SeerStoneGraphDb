@@ -1,0 +1,9 @@
+{application, graphdb_api,
+ [{description, "SeerStoneGraphDb - internal gRPC API for the external REST proxy"},
+  {vsn, "0.1.0"},
+  {registered, []},
+  {mod, {graphdb_api, []}},
+  {applications, [kernel, stdlib, grpcbox, graphdb, database]},
+  {env, []},
+  {modules, []}
+ ]}.
