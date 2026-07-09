@@ -109,12 +109,22 @@ so the edit is additive, not a blind overwrite. Add these keys:
 ]}.
 
 {grpc, [
-    {protos, ["apps/graphdb_api/priv/protos"]},
+    {protos, ["priv/protos"]},
     {gpb_opts, [{module_name_suffix, "_pb"},
-                {i, "apps/graphdb_api/priv/protos"},
-                {o, "apps/graphdb_api/src"}]}
+                {i, "priv/protos"},
+                {o, "src"}]}
 ]}.
 ```
+
+**Path correction (discovered during Task 2, not obvious from a standalone
+probe):** `grpcbox_plugin` resolves these paths relative to the *app's own
+`BaseDir`* (`apps/graphdb_api/`) when it runs inside an umbrella project —
+not relative to the workspace root. Paths written as
+`"apps/graphdb_api/priv/protos"` double-path and fail to find the `.proto`
+files. Use app-relative paths (`"priv/protos"`, `"src"`) as shown above —
+this was not caught by this plan's earlier standalone `grpcbox_plugin`
+probes because those ran in a single-app project at the workspace root,
+where app-relative and root-relative paths are the same thing.
 
 Update the `{relx, [{release, {seerstone, "0.1.0"}, [...]}, ...]}` app list.
 It is currently `[nref, database, seerstone]`. Change to:
