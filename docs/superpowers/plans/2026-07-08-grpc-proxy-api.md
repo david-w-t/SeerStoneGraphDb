@@ -243,15 +243,24 @@ its transitive deps (`chatterbox`, `gproc`, `hpack`, `ctx`,
 
 Run:
 ```bash
-./rebar3 shell --eval "\
-  {ok, _} = application:ensure_all_started(graphdb_api), \
-  true = lists:member(graphdb_api, proplists:get_keys(application:which_applications())), \
-  io:format(\"OK~n\"), \
-  init:stop()."
+erl -pa _build/default/lib/*/ebin -noshell -eval "
+  application:load(graphdb_api),
+  {ok, Deps} = application:get_key(graphdb_api, applications),
+  io:format(\"DEPS: ~p~n\", [Deps]),
+  {ok, _} = graphdb_api_sup:start_link(),
+  io:format(\"SUP_START_OK~n\")." -s init stop
 ```
-Expected: prints `OK` with no crash. (`graphdb_api` depends on `graphdb`/
-`database`, which will run bootstrap against a default Mnesia dir — that's
-fine for this smoke check; later CT suites use the isolated-dir pattern.)
+Expected: `DEPS: [kernel,stdlib,grpcbox,graphdb,database]` then
+`SUP_START_OK` — confirms the module loads, declares the right
+`applications` list, and its (empty) supervisor starts cleanly. **Do not
+use `./rebar3 shell --eval` for this** — verified in this environment: it
+does not execute the `--eval` expression at all under non-interactive
+stdin (no TTY), silently no-opping and printing only the shell banner.
+This task deliberately does not attempt to start the full `graphdb`/
+`database`/Mnesia stack — that needs real config (Mnesia dir, bootstrap
+file path) that only exists via a proper release or the isolated-dir CT
+pattern Task 4 builds; forcing it here would test Task 4's concern inside
+Task 1.
 
 - [ ] **Step 7: Commit**
 
