@@ -180,6 +180,7 @@ src/*_client.erl
 
 ```erlang
 %%---------------------------------------------------------------------
+%% Copyright (c) 2008 SeerStone, Inc.
 %% Copyright (c) 2026 David W. Thomas
 %% SPDX-License-Identifier: GPL-2.0-or-later
 %%---------------------------------------------------------------------
@@ -215,6 +216,7 @@ stop(_State) ->
 
 ```erlang
 %%---------------------------------------------------------------------
+%% Copyright (c) 2008 SeerStone, Inc.
 %% Copyright (c) 2026 David W. Thomas
 %% SPDX-License-Identifier: GPL-2.0-or-later
 %%---------------------------------------------------------------------
@@ -486,6 +488,7 @@ Expected: FAIL — `graphdb_api_value` undefined.
 
 ```erlang
 %%---------------------------------------------------------------------
+%% Copyright (c) 2008 SeerStone, Inc.
 %% Copyright (c) 2026 David W. Thomas
 %% SPDX-License-Identifier: GPL-2.0-or-later
 %%---------------------------------------------------------------------
@@ -725,6 +728,7 @@ Expected: FAIL — `graphdb_api_error` undefined.
 
 ```erlang
 %%---------------------------------------------------------------------
+%% Copyright (c) 2008 SeerStone, Inc.
 %% Copyright (c) 2026 David W. Thomas
 %% SPDX-License-Identifier: GPL-2.0-or-later
 %%---------------------------------------------------------------------
@@ -858,6 +862,7 @@ channel `Name`. Every generated `*_client` function's options map is
 
 ```erlang
 %%---------------------------------------------------------------------
+%% Copyright (c) 2008 SeerStone, Inc.
 %% Copyright (c) 2026 David W. Thomas
 %% SPDX-License-Identifier: GPL-2.0-or-later
 %%---------------------------------------------------------------------
@@ -1050,6 +1055,7 @@ everything tears down cleanly.
 
 ```erlang
 %%---------------------------------------------------------------------
+%% Copyright (c) 2008 SeerStone, Inc.
 %% Copyright (c) 2026 David W. Thomas
 %% SPDX-License-Identifier: GPL-2.0-or-later
 %%---------------------------------------------------------------------
@@ -1345,6 +1351,7 @@ Expected: still all PASS (pure addition, nothing removed).
 
 ```erlang
 %%---------------------------------------------------------------------
+%% Copyright (c) 2008 SeerStone, Inc.
 %% Copyright (c) 2026 David W. Thomas
 %% SPDX-License-Identifier: GPL-2.0-or-later
 %%---------------------------------------------------------------------
@@ -1492,6 +1499,7 @@ Expected: no errors, no `-behaviour` callback-mismatch warnings.
 
 ```erlang
 %%---------------------------------------------------------------------
+%% Copyright (c) 2008 SeerStone, Inc.
 %% Copyright (c) 2026 David W. Thomas
 %% SPDX-License-Identifier: GPL-2.0-or-later
 %%---------------------------------------------------------------------
@@ -1788,6 +1796,7 @@ Expected: writes `instance_service_pb.erl`,
 
 ```erlang
 %%---------------------------------------------------------------------
+%% Copyright (c) 2008 SeerStone, Inc.
 %% Copyright (c) 2026 David W. Thomas
 %% SPDX-License-Identifier: GPL-2.0-or-later
 %%---------------------------------------------------------------------
@@ -2229,6 +2238,7 @@ Expected: writes `class_service_pb.erl`,
 
 ```erlang
 %%---------------------------------------------------------------------
+%% Copyright (c) 2008 SeerStone, Inc.
 %% Copyright (c) 2026 David W. Thomas
 %% SPDX-License-Identifier: GPL-2.0-or-later
 %%---------------------------------------------------------------------
@@ -2561,6 +2571,7 @@ Expected: writes `attribute_service_pb.erl`,
 
 ```erlang
 %%---------------------------------------------------------------------
+%% Copyright (c) 2008 SeerStone, Inc.
 %% Copyright (c) 2026 David W. Thomas
 %% SPDX-License-Identifier: GPL-2.0-or-later
 %%---------------------------------------------------------------------
@@ -2879,6 +2890,7 @@ Expected: writes `rules_service_pb.erl`,
 
 ```erlang
 %%---------------------------------------------------------------------
+%% Copyright (c) 2008 SeerStone, Inc.
 %% Copyright (c) 2026 David W. Thomas
 %% SPDX-License-Identifier: GPL-2.0-or-later
 %%---------------------------------------------------------------------
@@ -3204,6 +3216,7 @@ Expected: writes `language_service_pb.erl`,
 
 ```erlang
 %%---------------------------------------------------------------------
+%% Copyright (c) 2008 SeerStone, Inc.
 %% Copyright (c) 2026 David W. Thomas
 %% SPDX-License-Identifier: GPL-2.0-or-later
 %%---------------------------------------------------------------------
@@ -3415,6 +3428,7 @@ Expected: writes `project_service_pb.erl`,
 
 ```erlang
 %%---------------------------------------------------------------------
+%% Copyright (c) 2008 SeerStone, Inc.
 %% Copyright (c) 2026 David W. Thomas
 %% SPDX-License-Identifier: GPL-2.0-or-later
 %%---------------------------------------------------------------------
@@ -3585,6 +3599,7 @@ Expected: writes `query_service_pb.erl`,
 
 ```erlang
 %%---------------------------------------------------------------------
+%% Copyright (c) 2008 SeerStone, Inc.
 %% Copyright (c) 2026 David W. Thomas
 %% SPDX-License-Identifier: GPL-2.0-or-later
 %%---------------------------------------------------------------------
@@ -3876,6 +3891,7 @@ real `sys.config` shape.
 
 ```erlang
 %%---------------------------------------------------------------------
+%% Copyright (c) 2008 SeerStone, Inc.
 %% Copyright (c) 2026 David W. Thomas
 %% SPDX-License-Identifier: GPL-2.0-or-later
 %%---------------------------------------------------------------------
