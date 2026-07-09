@@ -189,25 +189,44 @@ chokepoint implementing this.
 
 ## 6. New application: `graphdb_api`
 
-A new peer OTP application, not folded into `seerstone` or `graphdb`:
+A new peer OTP application, not folded into `seerstone` or `graphdb`.
+Verified against a throwaway `grpcbox_plugin` codegen probe (package
+`graphdb_api`, service `NodeService`, proto file `node_service.proto`) so
+the module names below are real, not guessed:
+
+- The `.proto` **file name** drives the gpb message module:
+  `node_service.proto` → `node_service_pb.erl` (message types as maps, e.g.
+  `#{nref => integer()}`).
+- The `.proto` **package + service name** drive the generated behaviour and
+  client modules, snake-cased: package `graphdb_api`, service `NodeService`
+  → `graphdb_api_node_service_bhvr.erl` (a `-callback` per RPC, generated,
+  never hand-edited) and `graphdb_api_node_service_client.erl`.
+- A generated unary callback has the exact shape:
+  `get_node(ctx:t(), node_service_pb:get_node_request()) -> {ok,
+  node_service_pb:get_node_reply(), ctx:t()} |
+  grpcbox_stream:grpc_error_response()`.
+- **The implementation module is hand-written and separate from the
+  generated `_bhvr` module** — e.g. `graphdb_api_node_service_impl.erl`,
+  declaring `-behaviour(graphdb_api_node_service_bhvr)`. Regenerating the
+  `.proto` never overwrites hand-written code.
 
 ```
 apps/graphdb_api/
   src/
-    graphdb_api.erl              %% application behaviour
-    graphdb_api_sup.erl          %% supervisor (one_for_one)
-    graphdb_api_node_service.erl
-    graphdb_api_instance_service.erl
-    graphdb_api_class_service.erl
-    graphdb_api_attribute_service.erl
-    graphdb_api_rules_service.erl
-    graphdb_api_language_service.erl
-    graphdb_api_project_service.erl
-    graphdb_api_query_service.erl
-    graphdb_api_value.erl        %% Value <-> term() codec (§2.2)
-    graphdb_api_error.erl        %% Erlang reason -> grpc status (§5)
+    graphdb_api.erl                     %% application behaviour (near-empty; see §6.1)
+    graphdb_api_sup.erl                 %% supervisor (one_for_one, empty child list initially)
+    graphdb_api_node_service_impl.erl
+    graphdb_api_instance_service_impl.erl
+    graphdb_api_class_service_impl.erl
+    graphdb_api_attribute_service_impl.erl
+    graphdb_api_rules_service_impl.erl
+    graphdb_api_language_service_impl.erl
+    graphdb_api_project_service_impl.erl
+    graphdb_api_query_service_impl.erl
+    graphdb_api_value.erl               %% Value <-> term() codec (§2.2)
+    graphdb_api_error.erl               %% Erlang reason -> grpc status (§5)
   priv/protos/
-    common.proto                 %% Node, Relationship, AVP, Value, Kind enum
+    common.proto                        %% Node, Relationship, AVP, Value, Kind enum
     node_service.proto
     instance_service.proto
     class_service.proto
@@ -219,37 +238,64 @@ apps/graphdb_api/
   graphdb_api.app.src
 ```
 
-One service-handler module per owning worker (§3's table), each depending
-only on that worker's public API plus the shared `graphdb_api_value` /
-`graphdb_api_error` codecs — mirrors the existing `graphdb_*` module
-boundaries, so each is independently understandable, testable, and
-assignable as one implementation slice.
+(Generated `*_pb.erl` / `*_bhvr.erl` / `*_client.erl` files land in the same
+`src/` directory per `grpcbox_plugin` convention, `.gitignore`d like other
+generated build artifacts — not hand-maintained, not listed above.)
+
+One hand-written `_impl` module per owning worker (§3's table), each
+depending only on that worker's public API plus the shared
+`graphdb_api_value` / `graphdb_api_error` codecs — mirrors the existing
+`graphdb_*` module boundaries, so each is independently understandable,
+testable, and assignable as one implementation slice.
 
 ### 6.1 Supervision placement and startup ordering — resolves a standing TASKS.md item
+
+**Verified mechanism (via the codegen/runtime probe, not assumed):**
+`grpcbox` ships as a self-contained OTP application (`mod =>
+{grpcbox_app, []}`) that, on its own `application:start/1`, reads a
+`{grpcbox, [{servers, [...]}]}` entry from `sys.config` and — if present —
+starts the configured listener(s) itself, under its own
+`grpcbox_services_simple_sup`. **`graphdb_api` never manually starts or
+supervises the gRPC listener.** `graphdb_api_sup` only hosts (currently
+nothing; reserved for future interceptor/auth state — §3 out-of-scope). The
+`sys.config` shape:
+
+```erlang
+{grpcbox, [
+  {servers, [
+    #{grpc_opts   => #{service_protos => [common_pb, node_service_pb, ...],
+                        services       => #{'graphdb_api.NodeService' => graphdb_api_node_service_impl,
+                                             'graphdb_api.InstanceService' => graphdb_api_instance_service_impl,
+                                             %% ... one entry per service in §3's table
+                                            }},
+      listen_opts => #{port => 8081, ip => {0,0,0,0}}}
+  ]}
+]}.
+```
 
 `TASKS.md` → *Phased application startup (deferred)* flags exactly this
 situation: "revisit when an externally-visible entry point (an API server or
 socket listener) is added ... that must not accept connections until the
 full graphdb stack is bootstrapped." **Resolution: sequence, not
 `start_phases`.** OTP's `application_controller` starts applications in
-dependency order and does not begin the next application until the current
-one's top supervisor has finished `init/1` (all children started). Placing
-`graphdb_api` **last** in the `relx` release app list —
-`[nref, database, seerstone, graphdb_api]` — guarantees `database` (which
-supervises `graphdb` + `dictionary`) has completed its own full startup,
-bootstrap included, before `graphdb_api_sup:init/1` runs and the gRPC
-listener opens its port. No `start_phases` complexity needed. This is a
-direct consequence of where this app sits in the dependency graph, not a new
-mechanism — the design doc records it so it isn't rediscovered as a race
-during implementation. (Housekeeping: the plan should update that `TASKS.md`
-entry to reflect this resolution.)
+`relx` release-list order and does not begin the next application until the
+current one has finished starting. The load-bearing placement is therefore
+**`grpcbox` itself**, not `graphdb_api`: putting `grpcbox` *after* `database`
+in the release app list — `[nref, database, seerstone, grpcbox, graphdb_api]`
+— guarantees `database` (which supervises `graphdb` + `dictionary`,
+bootstrap included) has fully started before `grpcbox_app` runs and binds
+the listen port. `graphdb_api`'s own position only needs to be "compiled and
+on the code path," which `relx` guarantees regardless of app-start order
+(code loading is release-wide, not per-app-start); it's listed last simply
+for readability. No `start_phases` complexity needed — this is a direct
+consequence of release app-list order, not a new mechanism. (Housekeeping:
+the plan should update that `TASKS.md` entry to reflect this resolution.)
 
-`grpcbox` itself ships as a normal OTP application (add to `applications` in
-`graphdb_api.app.src` and to the `relx` app list, positioned before
-`graphdb_api`); its server listener is configured via `grpcbox` application
-env (`grpc_opts`/`listen_opts`) rather than manually supervised as a child —
-exact wiring (config keys, `grpcbox_plugin` rebar3 plugin for `.proto`
-codegen) is an implementation-plan detail, not an architectural one.
+`grpcbox` must also be added to `graphdb_api.app.src`'s `applications` list
+(so the release includes it as a dependency), and to `graphdb_api`'s
+`rebar.config` deps alongside the `grpcbox_plugin` rebar3 plugin, which
+provides the `rebar3 grpc gen` provider that compiles `priv/protos/*.proto`
+into the `_pb.erl` / `_bhvr.erl` / `_client.erl` modules described above.
 
 ## 7. Testing approach
 
