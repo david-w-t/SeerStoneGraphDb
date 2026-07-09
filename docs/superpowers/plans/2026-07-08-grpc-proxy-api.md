@@ -800,7 +800,7 @@ EOF
 - Consumes: nothing new (uses `graphdb_nref`, `rel_id_server`, `graphdb_mgr`,
   `graphdb_attr`, `graphdb_class`, `graphdb_instance`, `graphdb_language`,
   `graphdb_query`, `graphdb_rules`, `graphdb_project` — all already exist).
-- Produces (used by every service CT suite, Tasks 5-12):
+- Produces (used by every service CT suite, Tasks 5-13):
   - `start_stack(Config) -> Config1` — isolated Mnesia dir + full worker
     stack, mirroring `graphdb_sup`'s real child order.
   - `stop_stack(Config) -> ok` — reverse teardown + tmp-dir cleanup.
@@ -809,8 +809,23 @@ EOF
     (the grpcbox `grpc_opts` shape); returns the `listen_opts` map needed
     for teardown and for building a client channel.
   - `stop_grpc(ListenOpts) -> ok`.
+  - `start_client(Module, Port) -> {ok, Module}` — starts a named
+    `grpcbox_channel` pointed at `{http, "127.0.0.1", Port, []}`; returns
+    the channel name (the same `Module` atom) to pass as
+    `#{channel => Name}` in every generated client call.
+  - `stop_client(Module) -> ok`.
   - `port_for(Module) -> inet:port_number()` — deterministic per-suite
     port so parallel CT suite processes don't collide.
+
+**Verified client API** (empirically probed against this exact toolchain
+with a throwaway greeter service — a live unary call was made and its
+reply asserted, not just type-checked): `grpcbox_channel:start_link/3` is
+`(Name :: atom(), Endpoints :: [{http | https, Host, Port,
+[ssl:ssl_option()]}], Options :: map())`, **not** `(Name, Host, Port,
+Options)` — the endpoint is a one-element list of a 4-tuple, not
+positional host/port args. `grpcbox_channel:stop/1` takes just the
+channel `Name`. Every generated `*_client` function's options map is
+`#{channel => Name}`, matching the channel name passed to `start_link/3`.
 
 - [ ] **Step 1: Write `apps/graphdb_api/test/graphdb_api_test_helper.erl`**
 
@@ -838,6 +853,7 @@ EOF
 
 -export([start_stack/1, stop_stack/1,
          start_grpc/3, stop_grpc/1,
+         start_client/2, stop_client/1,
          port_for/1]).
 
 -define(SCRATCH_SENTINEL, "_build/test/ct_scratch/").
@@ -932,6 +948,26 @@ start_grpc(Module, ServiceProtos, Services) ->
 %%-----------------------------------------------------------------------------
 stop_grpc(ListenOpts) ->
     grpcbox_services_simple_sup:terminate_child(ListenOpts).
+
+%%-----------------------------------------------------------------------------
+%% start_client(Module, Port) -> {ok, Module}
+%%
+%% Starts a grpcbox_channel named `Module`, pointed at the local grpcbox
+%% server on `Port`. Verified signature: start_link/3 takes a *list* of
+%% {Transport, Host, Port, SslOpts} endpoint tuples, not positional
+%% host/port arguments.
+%%-----------------------------------------------------------------------------
+start_client(Module, Port) ->
+    {ok, _ChPid} = grpcbox_channel:start_link(
+        Module, [{http, "127.0.0.1", Port, []}], #{}),
+    {ok, Module}.
+
+%%-----------------------------------------------------------------------------
+%% stop_client(Module) -> ok
+%%-----------------------------------------------------------------------------
+stop_client(Module) ->
+    catch grpcbox_channel:stop(Module),
+    ok.
 
 %%-----------------------------------------------------------------------------
 %% port_for(Module) -> inet:port_number()
@@ -1472,12 +1508,11 @@ init_per_testcase(_TC, Config0) ->
         ?MODULE, [node_service_pb],
         #{'graphdb_api.NodeService' => graphdb_api_node_service_impl}),
     #{port := Port} = ListenOpts,
-    {ok, _Conn} = grpcbox_channel:start_link(
-        ?MODULE, {127, 0, 0, 1}, Port, []),
+    {ok, ?MODULE} = graphdb_api_test_helper:start_client(?MODULE, Port),
     [{listen_opts, ListenOpts} | Config1].
 
 end_per_testcase(_TC, Config) ->
-    catch grpcbox_channel:stop(?MODULE),
+    graphdb_api_test_helper:stop_client(?MODULE),
     graphdb_api_test_helper:stop_grpc(proplists:get_value(listen_opts, Config)),
     graphdb_api_test_helper:stop_stack(Config),
     ok.
@@ -1886,7 +1921,7 @@ Expected: no errors.
 exact `init_per_testcase`/`end_per_testcase` shape from Task 5's suite
 (`graphdb_api_test_helper:start_stack/1` + `start_grpc(?MODULE,
 [instance_service_pb], #{'graphdb_api.InstanceService' =>
-graphdb_api_instance_service_impl})` + `grpcbox_channel:start_link/4`),
+graphdb_api_instance_service_impl})` + `start_client/2`),
 with these test cases:
 
 ```erlang
@@ -1917,11 +1952,11 @@ init_per_testcase(_TC, Config0) ->
         #{'graphdb_api.InstanceService' => graphdb_api_instance_service_impl,
           'graphdb_api.NodeService' => graphdb_api_node_service_impl}),
     #{port := Port} = ListenOpts,
-    {ok, _} = grpcbox_channel:start_link(?MODULE, {127, 0, 0, 1}, Port, []),
+    {ok, ?MODULE} = graphdb_api_test_helper:start_client(?MODULE, Port),
     [{listen_opts, ListenOpts} | Config1].
 
 end_per_testcase(_TC, Config) ->
-    catch grpcbox_channel:stop(?MODULE),
+    graphdb_api_test_helper:stop_client(?MODULE),
     graphdb_api_test_helper:stop_grpc(proplists:get_value(listen_opts, Config)),
     graphdb_api_test_helper:stop_stack(Config),
     ok.
@@ -2298,11 +2333,11 @@ init_per_testcase(_TC, Config0) ->
         ?MODULE, [class_service_pb],
         #{'graphdb_api.ClassService' => graphdb_api_class_service_impl}),
     #{port := Port} = ListenOpts,
-    {ok, _} = grpcbox_channel:start_link(?MODULE, {127, 0, 0, 1}, Port, []),
+    {ok, ?MODULE} = graphdb_api_test_helper:start_client(?MODULE, Port),
     [{listen_opts, ListenOpts} | Config1].
 
 end_per_testcase(_TC, Config) ->
-    catch grpcbox_channel:stop(?MODULE),
+    graphdb_api_test_helper:stop_client(?MODULE),
     graphdb_api_test_helper:stop_grpc(proplists:get_value(listen_opts, Config)),
     graphdb_api_test_helper:stop_stack(Config),
     ok.
@@ -2606,11 +2641,11 @@ init_per_testcase(_TC, Config0) ->
         ?MODULE, [attribute_service_pb],
         #{'graphdb_api.AttributeService' => graphdb_api_attribute_service_impl}),
     #{port := Port} = ListenOpts,
-    {ok, _} = grpcbox_channel:start_link(?MODULE, {127, 0, 0, 1}, Port, []),
+    {ok, ?MODULE} = graphdb_api_test_helper:start_client(?MODULE, Port),
     [{listen_opts, ListenOpts} | Config1].
 
 end_per_testcase(_TC, Config) ->
-    catch grpcbox_channel:stop(?MODULE),
+    graphdb_api_test_helper:stop_client(?MODULE),
     graphdb_api_test_helper:stop_grpc(proplists:get_value(listen_opts, Config)),
     graphdb_api_test_helper:stop_stack(Config),
     ok.
@@ -2942,11 +2977,11 @@ init_per_testcase(_TC, Config0) ->
         ?MODULE, [rules_service_pb],
         #{'graphdb_api.RulesService' => graphdb_api_rules_service_impl}),
     #{port := Port} = ListenOpts,
-    {ok, _} = grpcbox_channel:start_link(?MODULE, {127, 0, 0, 1}, Port, []),
+    {ok, ?MODULE} = graphdb_api_test_helper:start_client(?MODULE, Port),
     [{listen_opts, ListenOpts} | Config1].
 
 end_per_testcase(_TC, Config) ->
-    catch grpcbox_channel:stop(?MODULE),
+    graphdb_api_test_helper:stop_client(?MODULE),
     graphdb_api_test_helper:stop_grpc(proplists:get_value(listen_opts, Config)),
     graphdb_api_test_helper:stop_stack(Config),
     ok.
@@ -3215,11 +3250,11 @@ init_per_testcase(_TC, Config0) ->
         ?MODULE, [language_service_pb],
         #{'graphdb_api.LanguageService' => graphdb_api_language_service_impl}),
     #{port := Port} = ListenOpts,
-    {ok, _} = grpcbox_channel:start_link(?MODULE, {127, 0, 0, 1}, Port, []),
+    {ok, ?MODULE} = graphdb_api_test_helper:start_client(?MODULE, Port),
     [{listen_opts, ListenOpts} | Config1].
 
 end_per_testcase(_TC, Config) ->
-    catch grpcbox_channel:stop(?MODULE),
+    graphdb_api_test_helper:stop_client(?MODULE),
     graphdb_api_test_helper:stop_grpc(proplists:get_value(listen_opts, Config)),
     graphdb_api_test_helper:stop_stack(Config),
     ok.
@@ -3388,11 +3423,11 @@ init_per_testcase(_TC, Config0) ->
         ?MODULE, [project_service_pb],
         #{'graphdb_api.ProjectService' => graphdb_api_project_service_impl}),
     #{port := Port} = ListenOpts,
-    {ok, _} = grpcbox_channel:start_link(?MODULE, {127, 0, 0, 1}, Port, []),
+    {ok, ?MODULE} = graphdb_api_test_helper:start_client(?MODULE, Port),
     [{listen_opts, ListenOpts} | Config1].
 
 end_per_testcase(_TC, Config) ->
-    catch grpcbox_channel:stop(?MODULE),
+    graphdb_api_test_helper:stop_client(?MODULE),
     graphdb_api_test_helper:stop_grpc(proplists:get_value(listen_opts, Config)),
     graphdb_api_test_helper:stop_stack(Config),
     ok.
@@ -3556,11 +3591,11 @@ init_per_testcase(_TC, Config0) ->
         ?MODULE, [query_service_pb],
         #{'graphdb_api.QueryService' => graphdb_api_query_service_impl}),
     #{port := Port} = ListenOpts,
-    {ok, _} = grpcbox_channel:start_link(?MODULE, {127, 0, 0, 1}, Port, []),
+    {ok, ?MODULE} = graphdb_api_test_helper:start_client(?MODULE, Port),
     [{listen_opts, ListenOpts} | Config1].
 
 end_per_testcase(_TC, Config) ->
-    catch grpcbox_channel:stop(?MODULE),
+    graphdb_api_test_helper:stop_client(?MODULE),
     graphdb_api_test_helper:stop_grpc(proplists:get_value(listen_opts, Config)),
     graphdb_api_test_helper:stop_stack(Config),
     ok.
@@ -3828,11 +3863,11 @@ init_per_testcase(_TC, Config0) ->
           'graphdb_api.ProjectService'   => graphdb_api_project_service_impl,
           'graphdb_api.QueryService'     => graphdb_api_query_service_impl}),
     #{port := Port} = ListenOpts,
-    {ok, _} = grpcbox_channel:start_link(?MODULE, {127, 0, 0, 1}, Port, []),
+    {ok, ?MODULE} = graphdb_api_test_helper:start_client(?MODULE, Port),
     [{listen_opts, ListenOpts} | Config1].
 
 end_per_testcase(_TC, Config) ->
-    catch grpcbox_channel:stop(?MODULE),
+    graphdb_api_test_helper:stop_client(?MODULE),
     graphdb_api_test_helper:stop_grpc(proplists:get_value(listen_opts, Config)),
     graphdb_api_test_helper:stop_stack(Config),
     ok.
@@ -3844,7 +3879,7 @@ all_eight_services_answer_on_one_listener(_Config) ->
         graphdb_api_node_service_client:get_node(#{nref => 1}, Opts),
 
     {ok, #{project_id := ProjId}, _} =
-        graphdb_api_project_service_client:register_project("E2E", Opts),
+        graphdb_api_project_service_client:register_project(#{name => "E2E"}, Opts),
     {ok, #{is_project := true}, _} =
         graphdb_api_project_service_client:is_project(#{nref => ProjId}, Opts),
 
