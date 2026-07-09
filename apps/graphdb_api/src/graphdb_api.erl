@@ -21,6 +21,10 @@
 -module(graphdb_api).
 -behaviour(application).
 
+-revision('Revision: PA1 ').
+-created('Date: 2026-07-08').
+-created_by('david@davidwt.com').
+
 -export([start/2, stop/1]).
 
 start(_Type, _StartArgs) ->

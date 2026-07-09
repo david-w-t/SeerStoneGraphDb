@@ -17,6 +17,10 @@
 -module(graphdb_api_sup).
 -behaviour(supervisor).
 
+-revision('Revision: PA1 ').
+-created('Date: 2026-07-08').
+-created_by('david@davidwt.com').
+
 -export([start_link/0]).
 -export([init/1]).
 
