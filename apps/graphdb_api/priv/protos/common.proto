@@ -1,0 +1,68 @@
+syntax = "proto3";
+package graphdb_api;
+
+enum NodeKind {
+  NODE_KIND_UNSPECIFIED = 0;
+  CATEGORY = 1;
+  ATTRIBUTE = 2;
+  CLASS = 3;
+  INSTANCE = 4;
+  TEMPLATE = 5;
+}
+
+enum RelationshipKind {
+  RELATIONSHIP_KIND_UNSPECIFIED = 0;
+  TAXONOMY = 1;
+  COMPOSITION = 2;
+  CONNECTION = 3;
+  INSTANTIATION = 4;
+}
+
+message NullValue {}
+
+// A literal AVP value. `term_binary` is the erlang:term_to_binary/1
+// fallback for anything that isn't a plain string/int/float/bool.
+message Value {
+  oneof kind {
+    string    str         = 1;
+    int64     i           = 2;
+    double    d           = 3;
+    bool      b           = 4;
+    bytes     term_binary = 5;
+    NullValue null_value  = 6;
+  }
+}
+
+// Always carries a value — used for reads (Node.attribute_value_pairs,
+// Relationship.avps) and for AVPs supplied at creation time.
+message AVP {
+  int64 attribute = 1;
+  Value value = 2;
+}
+
+// Used only in update contexts, where "no value" (delete) must be
+// distinguishable from "value is null_value" (a real declared-but-unbound
+// upsert). See graphdb_mgr:update_node_avps/2's existing contract.
+message AVPUpdate {
+  int64 attribute = 1;
+  Value value = 2;   // ignored when delete = true
+  bool delete = 3;
+}
+
+message Node {
+  int64 nref = 1;
+  NodeKind kind = 2;
+  repeated int64 parents = 3;
+  repeated int64 classes = 4;
+  repeated AVP attribute_value_pairs = 5;
+}
+
+message Relationship {
+  int64 id = 1;
+  RelationshipKind kind = 2;
+  int64 source_nref = 3;
+  int64 characterization = 4;
+  int64 target_nref = 5;
+  int64 reciprocal = 6;
+  repeated AVP avps = 7;
+}
