@@ -20,6 +20,10 @@
 %%---------------------------------------------------------------------
 -module(graphdb_api_test_helper).
 
+-revision('Revision: PA1 ').
+-created('Date: 2026-07-08').
+-created_by('david@davidwt.com').
+
 -export([start_stack/1, stop_stack/1,
          start_grpc/3, stop_grpc/1,
          start_client/2, stop_client/1,
@@ -82,10 +86,20 @@ stop_stack(Config) ->
     catch dets:close(nref_allocator),
     catch dets:close(rel_id_server),
 
-    OrigCwd = proplists:get_value(orig_cwd, Config),
-    ok = file:set_cwd(OrigCwd),
-    TmpDir = proplists:get_value(tmp_dir, Config),
-    delete_dir_recursive(TmpDir),
+    %% Guarded: if start_stack/1 raised before appending these keys (e.g. an
+    %% {ok,_} = X:start_link() match failed partway through), Config carries
+    %% neither -- skip restore/delete rather than badmatch and abort the rest
+    %% of this cleanup (env unset must still run either way).
+    case proplists:get_value(orig_cwd, Config) of
+        undefined ->
+            ok;
+        OrigCwd ->
+            ok = file:set_cwd(OrigCwd),
+            case proplists:get_value(tmp_dir, Config) of
+                undefined -> ok;
+                TmpDir    -> delete_dir_recursive(TmpDir)
+            end
+    end,
 
     application:unset_env(seerstone_graph_db, bootstrap_file),
     application:unset_env(mnesia, dir),
