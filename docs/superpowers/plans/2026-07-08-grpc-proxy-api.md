@@ -502,6 +502,10 @@ Expected: FAIL — `graphdb_api_value` undefined.
 %%---------------------------------------------------------------------
 -module(graphdb_api_value).
 
+-revision('Revision: PA1 ').
+-created('Date: 2026-07-08').
+-created_by('david@davidwt.com').
+
 -define(NYI(X), (begin
     io:format("*** NYI ~p ~p ~p~n",[?MODULE, ?LINE, X]),
     exit(nyi)
@@ -731,6 +735,10 @@ Expected: FAIL — `graphdb_api_error` undefined.
 %% Initial implementation: curated status table + trailer passthrough.
 %%---------------------------------------------------------------------
 -module(graphdb_api_error).
+
+-revision('Revision: PA1 ').
+-created('Date: 2026-07-08').
+-created_by('david@davidwt.com').
 
 -define(NYI(X), (begin
     io:format("*** NYI ~p ~p ~p~n",[?MODULE, ?LINE, X]),
@@ -1345,6 +1353,10 @@ Expected: still all PASS (pure addition, nothing removed).
 -module(graphdb_api_node_service_impl).
 -behaviour(graphdb_api_node_service_bhvr).
 
+-revision('Revision: PA1 ').
+-created('Date: 2026-07-08').
+-created_by('david@davidwt.com').
+
 -export([get_node/2, get_relationships/2, create_attribute/2, create_class/2,
          retire_node/2, unretire_node/2, update_node_avps/2, delete_node/2,
          mutate/2]).
@@ -1786,6 +1798,10 @@ Expected: writes `instance_service_pb.erl`,
 -module(graphdb_api_instance_service_impl).
 -behaviour(graphdb_api_instance_service_bhvr).
 
+-revision('Revision: PA1 ').
+-created('Date: 2026-07-08').
+-created_by('david@davidwt.com').
+
 -export([create_instance/2, add_relationship/2, remove_relationship/2,
          update_relationship/2, update_relationship_both/2,
          add_class_membership/2, get_instance/2, children/2,
@@ -2221,6 +2237,10 @@ Expected: writes `class_service_pb.erl`,
 -module(graphdb_api_class_service_impl).
 -behaviour(graphdb_api_class_service_bhvr).
 
+-revision('Revision: PA1 ').
+-created('Date: 2026-07-08').
+-created_by('david@davidwt.com').
+
 -export([create_class/2, add_superclass/2, add_qualifying_characteristic/2,
          bind_qc_value/2, add_template/2, get_class/2, subclasses/2,
          ancestors/2, get_template/2, templates_for_class/2,
@@ -2549,6 +2569,10 @@ Expected: writes `attribute_service_pb.erl`,
 -module(graphdb_api_attribute_service_impl).
 -behaviour(graphdb_api_attribute_service_bhvr).
 
+-revision('Revision: PA1 ').
+-created('Date: 2026-07-08').
+-created_by('david@davidwt.com').
+
 -export([create_name_attribute/2, create_literal_attribute/2,
          create_relationship_attribute_pair/2, create_relationship_type/2,
          get_attribute/2, list_attributes/2, list_relationship_types/2]).
@@ -2865,6 +2889,10 @@ Expected: writes `rules_service_pb.erl`,
 %%---------------------------------------------------------------------
 -module(graphdb_api_rules_service_impl).
 -behaviour(graphdb_api_rules_service_bhvr).
+
+-revision('Revision: PA1 ').
+-created('Date: 2026-07-08').
+-created_by('david@davidwt.com').
 
 -export([create_composition_rule/2, create_connection_rule/2, get_rule/2,
          rules_for_class/2, composition_rules_for_class/2,
@@ -3186,6 +3214,10 @@ Expected: writes `language_service_pb.erl`,
 -module(graphdb_api_language_service_impl).
 -behaviour(graphdb_api_language_service_bhvr).
 
+-revision('Revision: PA1 ').
+-created('Date: 2026-07-08').
+-created_by('david@davidwt.com').
+
 -export([register_language/2, register_dialect/2, lookup_language_nref/2,
          set_labels/2, make_chain/2, resolve_label/2]).
 
@@ -3391,6 +3423,10 @@ Expected: writes `project_service_pb.erl`,
 -module(graphdb_api_project_service_impl).
 -behaviour(graphdb_api_project_service_bhvr).
 
+-revision('Revision: PA1 ').
+-created('Date: 2026-07-08').
+-created_by('david@davidwt.com').
+
 -export([register_project/2, is_project/2]).
 
 register_project(Ctx, #{name := Name}) ->
@@ -3559,6 +3595,10 @@ Expected: writes `query_service_pb.erl`,
 %%---------------------------------------------------------------------
 -module(graphdb_api_query_service_impl).
 -behaviour(graphdb_api_query_service_bhvr).
+
+-revision('Revision: PA1 ').
+-created('Date: 2026-07-08').
+-created_by('david@davidwt.com').
 
 -export([find_path/2]).
 
