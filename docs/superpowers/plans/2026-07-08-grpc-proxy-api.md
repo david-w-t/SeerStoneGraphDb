@@ -2073,8 +2073,23 @@ resolve_value(Ctx, #{instance_nref := Nref, attr_nref := AttrNref}) ->
 %%-----------------------------------------------------------------------------
 with_session(ProjId, Fun) ->
     case graphdb_project:open_session(ProjId) of
-        {ok, Session}    -> Fun(Session);
-        {error, _} = Err -> graphdb_api_error:to_status(Err)
+        {ok, Session} ->
+            Fun(Session);
+        {error, not_a_project} ->
+            %% project_id is this RPC's write credential (design §2.1): a
+            %% session that fails to open is an authentication failure from
+            %% the wire's perspective, not a generic graph-lookup miss --
+            %% so it surfaces as invalid_session (UNAUTHENTICATED, 16),
+            %% not graphdb_project:open_session/1's own not_a_project
+            %% reason (which graphdb_api_error's curated table maps to
+            %% NOT_FOUND, 5, for other, non-session-establishment callers).
+            %% This intentionally sacrifices trailer precision (the trailer
+            %% carries invalid_session, not the more specific
+            %% not_a_project) for a consistent "session establishment
+            %% failed" signal at this API boundary.
+            graphdb_api_error:to_status({error, invalid_session});
+        {error, _} = Err ->
+            graphdb_api_error:to_status(Err)
     end.
 
 reply_ok_or_status(ok, Ctx)      -> {ok, #{}, Ctx};
@@ -2162,7 +2177,7 @@ create_instance_rejects_missing_project(_Config) ->
 add_and_remove_relationship_round_trip(_Config) ->
     {ok, ProjNref} = graphdb_project:register_project("Acme2"),
     {ok, ClassNref} = graphdb_class:create_class("Widget3", 3),
-    {ok, RelNref} = graphdb_attr:create_relationship_attribute_pair(
+    {ok, {RelNref, _}} = graphdb_attr:create_relationship_attribute_pair(
         "linkedTo", "linkedFrom", instance),
     {ok, Session} = graphdb_project:open_session(ProjNref),
     {ok, A, _} = graphdb_instance:create_instance(Session, "a", ClassNref, ProjNref),
@@ -2178,7 +2193,7 @@ add_and_remove_relationship_round_trip(_Config) ->
 update_relationship_avps(_Config) ->
     {ok, ProjNref} = graphdb_project:register_project("Acme3"),
     {ok, ClassNref} = graphdb_class:create_class("Widget4", 3),
-    {ok, RelNref} = graphdb_attr:create_relationship_attribute_pair(
+    {ok, {RelNref, _}} = graphdb_attr:create_relationship_attribute_pair(
         "linkedTo2", "linkedFrom2", instance),
     {ok, Session} = graphdb_project:open_session(ProjNref),
     {ok, A, _} = graphdb_instance:create_instance(Session, "a2", ClassNref, ProjNref),
@@ -3218,7 +3233,7 @@ create_composition_rule_then_get_rule(_Config) ->
 create_connection_rule_returns_nref(_Config) ->
     {ok, SourceClass} = graphdb_class:create_class("Driver3", 3),
     {ok, TargetClass} = graphdb_class:create_class("Car4", 3),
-    {ok, RelNref} = graphdb_attr:create_relationship_attribute_pair("drives3", "drivenBy3", instance),
+    {ok, {RelNref, _}} = graphdb_attr:create_relationship_attribute_pair("drives3", "drivenBy3", instance),
     Mult = #{min => 0, max => 0, unbounded => true},
     {ok, #{rule_nref := RuleNref}, _} = graphdb_api_rules_service_client:create_connection_rule(
         #{name => "driver-drives-car", source_class => SourceClass, characterization => RelNref,
