@@ -1450,6 +1450,15 @@ Expected: still all PASS (pure addition, nothing removed).
 -created('Date: 2026-07-08').
 -created_by('david@davidwt.com').
 
+-define(NYI(X), (begin
+    io:format("*** NYI ~p ~p ~p~n",[?MODULE, ?LINE, X]),
+    exit(nyi)
+end)).
+-define(UEM(F, X), (begin
+    io:format("*** UEM ~p:~p ~p ~p~n",[?MODULE, F, ?LINE, X]),
+    exit(uem)
+end)).
+
 -export([get_node/2, get_relationships/2, create_attribute/2, create_class/2,
          retire_node/2, unretire_node/2, update_node_avps/2, delete_node/2,
          mutate/2]).
@@ -1525,14 +1534,21 @@ mutation_op_to_term(#{op := {add_relationship, Op}}) ->
     #{source := S, characterization := C, target := T, reciprocal := R} = Op,
     FwdAVPs = [graphdb_api_value:pb_to_avp(A) || A <- maps:get(fwd_avps, Op, [])],
     RevAVPs = [graphdb_api_value:pb_to_avp(A) || A <- maps:get(rev_avps, Op, [])],
-    case maps:get(template, Op, 0) of
-        0 ->
-            {add_relationship, S, C, T, R};
-        Template ->
-            case {FwdAVPs, RevAVPs} of
-                {[], []} -> {add_relationship, S, C, T, R, Template};
-                _        -> {add_relationship, S, C, T, R, Template, {FwdAVPs, RevAVPs}}
-            end
+    %% graphdb_mgr:prepare/1 defaults an omitted Template to the atom
+    %% `default` (apps/graphdb/src/graphdb_mgr.erl:445-447) and accepts it
+    %% explicitly alongside an AVPSpec via the /6 grammar arity -- so
+    %% "unset template" and "has AVPs" are independent, not mutually
+    %% exclusive. Checking {FwdAVPs, RevAVPs} inside the `0 -> ...` branch
+    %% (as an earlier draft of this clause did) silently drops any
+    %% populated AVPs whenever the wire template is unset.
+    Template = case maps:get(template, Op, 0) of
+        0 -> default;
+        T2 -> T2
+    end,
+    case {FwdAVPs, RevAVPs} of
+        {[], []} when Template =:= default -> {add_relationship, S, C, T, R};
+        {[], []}                           -> {add_relationship, S, C, T, R, Template};
+        _                                  -> {add_relationship, S, C, T, R, Template, {FwdAVPs, RevAVPs}}
     end;
 mutation_op_to_term(#{op := {retire_node, #{nref := Nref}}}) ->
     {retire_node, Nref};
@@ -1727,7 +1743,11 @@ EOF
   remove_relationship/4,5,update_relationship/5,6,
   update_relationship_both/5,6,add_class_membership/3,get_instance/1,
   children/1,compositional_ancestors/1,class_of/1,class_memberships/1,
-  resolve_value/2}`.
+  resolve_value/2}`, `graphdb_class:default_template/1` (source-class
+  default-template resolution when the wire `AddRelationshipRequest`
+  carries AVPs but no explicit template — see the `add_relationship/2`
+  code below for why this direct call, unlike `graphdb_mgr:mutate/1`'s
+  grammar, has no atom-`default` shortcut).
 - Produces: session-reconstruction pattern (`project_id` field →
   `graphdb_project:open_session/1`) — every later session-gated service
   (none of Tasks 7-12 need it; this is the only one) reuses this exact
@@ -1897,6 +1917,15 @@ Expected: writes `instance_service_pb.erl`,
 -created('Date: 2026-07-08').
 -created_by('david@davidwt.com').
 
+-define(NYI(X), (begin
+    io:format("*** NYI ~p ~p ~p~n",[?MODULE, ?LINE, X]),
+    exit(nyi)
+end)).
+-define(UEM(F, X), (begin
+    io:format("*** UEM ~p:~p ~p ~p~n",[?MODULE, F, ?LINE, X]),
+    exit(uem)
+end)).
+
 -export([create_instance/2, add_relationship/2, remove_relationship/2,
          update_relationship/2, update_relationship_both/2,
          add_class_membership/2, get_instance/2, children/2,
@@ -1921,14 +1950,41 @@ add_relationship(Ctx, #{project_id := ProjId, source := S, characterization := C
     with_session(ProjId, fun(Session) ->
         FwdAVPs = [graphdb_api_value:pb_to_avp(A) || A <- maps:get(fwd_avps, Req, [])],
         RevAVPs = [graphdb_api_value:pb_to_avp(A) || A <- maps:get(rev_avps, Req, [])],
-        Result = case maps:get(template, Req, 0) of
-            0 ->
+        %% Unlike graphdb_mgr:mutate/1's grammar (whose prepare/1 accepts the
+        %% atom `default` as TemplateSpec even alongside an AVPSpec),
+        %% graphdb_instance:add_relationship/7's public arity guards
+        %% `is_integer(TemplateNref)` -- passing the atom `default` there
+        %% raises function_clause. So "unset template" + "has AVPs" must
+        %% resolve the real default template nref first via
+        %% graphdb_class:default_template/1, then call the explicit-nref
+        %% /7 arity. (Caught in this plan's Task 5 review: an earlier draft
+        %% of the analogous NodeService.Mutate translation silently dropped
+        %% AVPs whenever the wire template was unset -- fixed there by
+        %% passing the graphdb_mgr-specific atom `default` through, which
+        %% is NOT available on this direct graphdb_instance call path.)
+        Result = case {maps:get(template, Req, 0), FwdAVPs, RevAVPs} of
+            {0, [], []} ->
                 graphdb_instance:add_relationship(Session, S, C, T, R);
-            Template ->
-                case {FwdAVPs, RevAVPs} of
-                    {[], []} -> graphdb_instance:add_relationship(Session, S, C, T, R, Template);
-                    _        -> graphdb_instance:add_relationship(Session, S, C, T, R, Template, {FwdAVPs, RevAVPs})
-                end
+            {0, _, _} ->
+                case graphdb_instance:class_of(S) of
+                    {ok, ClassNref} ->
+                        case graphdb_class:default_template(ClassNref) of
+                            {ok, TemplateNref} ->
+                                graphdb_instance:add_relationship(Session, S, C, T, R, TemplateNref, {FwdAVPs, RevAVPs});
+                            not_found ->
+                                {error, {no_default_template, ClassNref}};
+                            {error, _} = Err ->
+                                Err
+                        end;
+                    not_found ->
+                        {error, {no_class_membership, S}};
+                    {error, _} = Err ->
+                        Err
+                end;
+            {Template, [], []} ->
+                graphdb_instance:add_relationship(Session, S, C, T, R, Template);
+            {Template, _, _} ->
+                graphdb_instance:add_relationship(Session, S, C, T, R, Template, {FwdAVPs, RevAVPs})
         end,
         reply_ok_or_status(Result, Ctx)
     end).
@@ -2337,6 +2393,15 @@ Expected: writes `class_service_pb.erl`,
 -created('Date: 2026-07-08').
 -created_by('david@davidwt.com').
 
+-define(NYI(X), (begin
+    io:format("*** NYI ~p ~p ~p~n",[?MODULE, ?LINE, X]),
+    exit(nyi)
+end)).
+-define(UEM(F, X), (begin
+    io:format("*** UEM ~p:~p ~p ~p~n",[?MODULE, F, ?LINE, X]),
+    exit(uem)
+end)).
+
 -export([create_class/2, add_superclass/2, add_qualifying_characteristic/2,
          bind_qc_value/2, add_template/2, get_class/2, subclasses/2,
          ancestors/2, get_template/2, templates_for_class/2,
@@ -2670,6 +2735,15 @@ Expected: writes `attribute_service_pb.erl`,
 -created('Date: 2026-07-08').
 -created_by('david@davidwt.com').
 
+-define(NYI(X), (begin
+    io:format("*** NYI ~p ~p ~p~n",[?MODULE, ?LINE, X]),
+    exit(nyi)
+end)).
+-define(UEM(F, X), (begin
+    io:format("*** UEM ~p:~p ~p ~p~n",[?MODULE, F, ?LINE, X]),
+    exit(uem)
+end)).
+
 -export([create_name_attribute/2, create_literal_attribute/2,
          create_relationship_attribute_pair/2, create_relationship_type/2,
          get_attribute/2, list_attributes/2, list_relationship_types/2]).
@@ -2991,6 +3065,15 @@ Expected: writes `rules_service_pb.erl`,
 -revision('Revision: PA1 ').
 -created('Date: 2026-07-08').
 -created_by('david@davidwt.com').
+
+-define(NYI(X), (begin
+    io:format("*** NYI ~p ~p ~p~n",[?MODULE, ?LINE, X]),
+    exit(nyi)
+end)).
+-define(UEM(F, X), (begin
+    io:format("*** UEM ~p:~p ~p ~p~n",[?MODULE, F, ?LINE, X]),
+    exit(uem)
+end)).
 
 -export([create_composition_rule/2, create_connection_rule/2, get_rule/2,
          rules_for_class/2, composition_rules_for_class/2,
@@ -3317,6 +3400,15 @@ Expected: writes `language_service_pb.erl`,
 -created('Date: 2026-07-08').
 -created_by('david@davidwt.com').
 
+-define(NYI(X), (begin
+    io:format("*** NYI ~p ~p ~p~n",[?MODULE, ?LINE, X]),
+    exit(nyi)
+end)).
+-define(UEM(F, X), (begin
+    io:format("*** UEM ~p:~p ~p ~p~n",[?MODULE, F, ?LINE, X]),
+    exit(uem)
+end)).
+
 -export([register_language/2, register_dialect/2, lookup_language_nref/2,
          set_labels/2, make_chain/2, resolve_label/2]).
 
@@ -3527,6 +3619,15 @@ Expected: writes `project_service_pb.erl`,
 -created('Date: 2026-07-08').
 -created_by('david@davidwt.com').
 
+-define(NYI(X), (begin
+    io:format("*** NYI ~p ~p ~p~n",[?MODULE, ?LINE, X]),
+    exit(nyi)
+end)).
+-define(UEM(F, X), (begin
+    io:format("*** UEM ~p:~p ~p ~p~n",[?MODULE, F, ?LINE, X]),
+    exit(uem)
+end)).
+
 -export([register_project/2, is_project/2]).
 
 register_project(Ctx, #{name := Name}) ->
@@ -3700,6 +3801,15 @@ Expected: writes `query_service_pb.erl`,
 -revision('Revision: PA1 ').
 -created('Date: 2026-07-08').
 -created_by('david@davidwt.com').
+
+-define(NYI(X), (begin
+    io:format("*** NYI ~p ~p ~p~n",[?MODULE, ?LINE, X]),
+    exit(nyi)
+end)).
+-define(UEM(F, X), (begin
+    io:format("*** UEM ~p:~p ~p ~p~n",[?MODULE, F, ?LINE, X]),
+    exit(uem)
+end)).
 
 -export([find_path/2]).
 
