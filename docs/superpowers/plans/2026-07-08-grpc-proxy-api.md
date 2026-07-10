@@ -1046,12 +1046,36 @@ stop_grpc(ListenOpts) ->
 %% every test case after the first in a suite fails with
 %% {already_started, ...} because the prior test's listener/channel was
 %% never torn down.
+%%
+%% wait_until_ready/2 is also load-bearing (discovered during Task 6's
+%% review, investigated post-merge): grpcbox_channel's init/1 starts in
+%% state `idle` and connects asynchronously (an `internal, connect` event
+%% handled only after start_link/3 already returned), so a call made
+%% immediately after start_link can race the connection and fail with
+%% {error, no_endpoints} (grpcbox_channel.erl's idle/connected state
+%% functions + gproc_pool:pick_worker/1) -- observed as an intermittent
+%% order-dependent failure in a full ./rebar3 ct run (all suites sharing
+%% one VM). grpcbox_channel:start_link/3 also accepts a `sync_start =>
+%% true` option that makes init/1 connect inline instead -- rejected here
+%% because it moves the blocking wait inside the gen_statem's own init/1
+%% (a slow/misbehaving connect could hang start_link itself with no
+%% bound); the bounded poll below can only ever wait the fixed 2s cap
+%% before failing loudly.
 %%-----------------------------------------------------------------------------
 start_client(Module, Port) ->
     {ok, ChPid} = grpcbox_channel:start_link(
         Module, [{http, "127.0.0.1", Port, []}], #{}),
     true = unlink(ChPid),
+    ok = wait_until_ready(Module, 200),
     {ok, Module}.
+
+wait_until_ready(_Module, 0) ->
+    {error, channel_never_ready};
+wait_until_ready(Module, Retries) ->
+    case grpcbox_channel:is_ready(Module) of
+        true  -> ok;
+        false -> timer:sleep(10), wait_until_ready(Module, Retries - 1)
+    end.
 
 %%-----------------------------------------------------------------------------
 %% stop_client(Module) -> ok

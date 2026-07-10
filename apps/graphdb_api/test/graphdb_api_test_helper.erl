@@ -145,12 +145,30 @@ stop_grpc(ListenOpts) ->
 %% {shutdown, force_delete}, a non-normal reason that -- left linked --
 %% propagates an EXIT signal to this (non-trapping) CT test-case process
 %% and kills it, aborting end_per_testcase before stop_stack/1 runs.
+%%
+%% Waits for is_ready/1 before returning: grpcbox_channel's init/1 starts
+%% in state `idle` and connects asynchronously (an `internal, connect`
+%% event handled only after start_link/3 already returned), so a call
+%% made immediately after start_link can race the connection and fail
+%% with {error, no_endpoints} (grpcbox_channel.erl's idle/connected state
+%% functions + gproc_pool:pick_worker/1) -- observed as an intermittent
+%% order-dependent failure in a full ./rebar3 ct run. Bounded (2s) so a
+%% genuinely broken channel fails loudly instead of hanging.
 %%-----------------------------------------------------------------------------
 start_client(Module, Port) ->
     {ok, ChPid} = grpcbox_channel:start_link(
         Module, [{http, "127.0.0.1", Port, []}], #{}),
     true = unlink(ChPid),
+    ok = wait_until_ready(Module, 200),
     {ok, Module}.
+
+wait_until_ready(_Module, 0) ->
+    {error, channel_never_ready};
+wait_until_ready(Module, Retries) ->
+    case grpcbox_channel:is_ready(Module) of
+        true  -> ok;
+        false -> timer:sleep(10), wait_until_ready(Module, Retries - 1)
+    end.
 
 %%-----------------------------------------------------------------------------
 %% stop_client(Module) -> ok
