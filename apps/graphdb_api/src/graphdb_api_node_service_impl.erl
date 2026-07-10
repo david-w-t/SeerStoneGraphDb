@@ -22,6 +22,15 @@
 -created('Date: 2026-07-08').
 -created_by('david@davidwt.com').
 
+-define(NYI(X), (begin
+    io:format("*** NYI ~p ~p ~p~n",[?MODULE, ?LINE, X]),
+    exit(nyi)
+end)).
+-define(UEM(F, X), (begin
+    io:format("*** UEM ~p:~p ~p ~p~n",[?MODULE, F, ?LINE, X]),
+    exit(uem)
+end)).
+
 -export([get_node/2, get_relationships/2, create_attribute/2, create_class/2,
          retire_node/2, unretire_node/2, update_node_avps/2, delete_node/2,
          mutate/2]).
@@ -110,14 +119,19 @@ mutation_op_to_term(#{op := {add_relationship, Op}}) ->
     #{source := S, characterization := C, target := T, reciprocal := R} = Op,
     FwdAVPs = [graphdb_api_value:pb_to_avp(A) || A <- maps:get(fwd_avps, Op, [])],
     RevAVPs = [graphdb_api_value:pb_to_avp(A) || A <- maps:get(rev_avps, Op, [])],
-    case maps:get(template, Op, 0) of
-        0 ->
-            {add_relationship, S, C, T, R};
-        Template ->
-            case {FwdAVPs, RevAVPs} of
-                {[], []} -> {add_relationship, S, C, T, R, Template};
-                _        -> {add_relationship, S, C, T, R, Template, {FwdAVPs, RevAVPs}}
-            end
+    %% graphdb_mgr:prepare/1 defaults an omitted Template to the atom
+    %% `default` (apps/graphdb/src/graphdb_mgr.erl:445-447) and accepts it
+    %% explicitly alongside an AVPSpec via the /6 grammar arity -- so
+    %% "unset template" and "has AVPs" are independent, not mutually
+    %% exclusive.
+    Template = case maps:get(template, Op, 0) of
+        0 -> default;
+        T2 -> T2
+    end,
+    case {FwdAVPs, RevAVPs} of
+        {[], []} when Template =:= default -> {add_relationship, S, C, T, R};
+        {[], []}                           -> {add_relationship, S, C, T, R, Template};
+        _                                  -> {add_relationship, S, C, T, R, Template, {FwdAVPs, RevAVPs}}
     end;
 mutation_op_to_term(#{op := {retire_node, #{nref := Nref}}}) ->
     {retire_node, Nref};

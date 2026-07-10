@@ -19,6 +19,19 @@
 -include_lib("common_test/include/ct.hrl").
 -include_lib("stdlib/include/assert.hrl").
 
+%% Local mirror of graphdb's #relationship{} record shape (matches
+%% graphdb_mgr.erl / graphdb_instance.erl -- no shared .hrl exports it).
+%% Only needed to inspect the `avps` field written by mutate/1.
+-record(relationship, {
+    id,
+    kind,
+    source_nref,
+    characterization,
+    target_nref,
+    reciprocal,
+    avps
+}).
+
 -export([all/0, suite/0]).
 -export([init_per_testcase/2, end_per_testcase/2]).
 -export([get_node_returns_root_category/1,
@@ -27,6 +40,7 @@
          retire_then_unretire_node/1,
          update_node_avps_upserts_and_deletes/1,
          mutate_batch_add_relationship/1,
+         mutate_add_relationship_unset_template_keeps_avps/1,
          get_node_not_found_maps_to_grpc_status/1,
          delete_node_maps_to_unimplemented/1]).
 
@@ -38,6 +52,7 @@ all() -> [get_node_returns_root_category,
           retire_then_unretire_node,
           update_node_avps_upserts_and_deletes,
           mutate_batch_add_relationship,
+          mutate_add_relationship_unset_template_keeps_avps,
           get_node_not_found_maps_to_grpc_status,
           delete_node_maps_to_unimplemented].
 
@@ -108,6 +123,44 @@ mutate_batch_add_relationship(_Config) ->
     {error, {Status, _Msg}, _Meta} =
         graphdb_api_node_service_client:get_node(#{nref => A}, #{channel => ?MODULE}),
     ?assertEqual(grpcbox_stream:code_to_status(13), Status).
+
+%% Regression test for the silent AVP-loss bug in
+%% graphdb_api_node_service_impl:mutation_op_to_term/1's add_relationship
+%% clause: an `add_relationship` op with `template => 0` (wire "unset") but
+%% non-empty `fwd_avps` must NOT drop those AVPs. graphdb_mgr:prepare/1
+%% defaults an omitted Template to the atom `default`, and its /6 arity
+%% accepts `default` alongside an explicit AVPSpec -- "unset template" and
+%% "has AVPs" are independent, not mutually exclusive (see
+%% apps/graphdb/src/graphdb_mgr.erl:445-453). Sets up two real instances and
+%% a real relationship-attribute pair directly via the Erlang API (this
+%% suite's server runs in-process, per graphdb_api_test_helper), then drives
+%% the mutate RPC over the wire and confirms the forward AVP landed on the
+%% written relationship row.
+mutate_add_relationship_unset_template_keeps_avps(_Config) ->
+    {ok, Project} = graphdb_project:register_project("NodeSvc AVP-loss test"),
+    {ok, Session} = graphdb_project:open_session(Project),
+    {ok, ClassNref} = graphdb_class:create_class("NSApiAvpClass", 3),
+    {ok, InstA, _} = graphdb_instance:create_instance(Session, "NSApiAvpA", ClassNref, 5),
+    {ok, InstB, _} = graphdb_instance:create_instance(Session, "NSApiAvpB", ClassNref, 5),
+    {ok, {CharNref, RecipNref}} =
+        graphdb_attr:create_relationship_attribute_pair("NSApiKnows", "NSApiKnownBy",
+            instance),
+    {ok, SourceAttr} = graphdb_attr:create_literal_attribute("nsapi_source", string),
+    FwdAvpWire = #{attribute => SourceAttr,
+                   value => graphdb_api_value:term_to_value("wire-test")},
+    Op = #{op => {add_relationship,
+                  #{source => InstA, characterization => CharNref,
+                    target => InstB, reciprocal => RecipNref,
+                    template => 0,
+                    fwd_avps => [FwdAvpWire], rev_avps => []}}},
+    {ok, #{}, _} = graphdb_api_node_service_client:mutate(
+        #{ops => [Op]}, #{channel => ?MODULE}),
+    {ok, Rels} = graphdb_mgr:get_relationships(InstA),
+    [Fwd] = [R || R <- Rels,
+        R#relationship.characterization =:= CharNref,
+        R#relationship.target_nref =:= InstB],
+    ?assert(lists:member(#{attribute => SourceAttr, value => "wire-test"},
+        Fwd#relationship.avps)).
 
 get_node_not_found_maps_to_grpc_status(_Config) ->
     {error, {Status, _Msg}, _Meta} = graphdb_api_node_service_client:get_node(
