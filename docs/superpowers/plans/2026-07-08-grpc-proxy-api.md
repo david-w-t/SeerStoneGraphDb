@@ -112,19 +112,34 @@ so the edit is additive, not a blind overwrite. Add these keys:
     {protos, ["priv/protos"]},
     {gpb_opts, [{module_name_suffix, "_pb"},
                 {i, "priv/protos"},
+                {i, "apps/graphdb_api/priv/protos"},
                 {o, "src"}]}
 ]}.
 ```
 
 **Path correction (discovered during Task 2, not obvious from a standalone
-probe):** `grpcbox_plugin` resolves these paths relative to the *app's own
-`BaseDir`* (`apps/graphdb_api/`) when it runs inside an umbrella project —
-not relative to the workspace root. Paths written as
-`"apps/graphdb_api/priv/protos"` double-path and fail to find the `.proto`
-files. Use app-relative paths (`"priv/protos"`, `"src"`) as shown above —
-this was not caught by this plan's earlier standalone `grpcbox_plugin`
-probes because those ran in a single-app project at the workspace root,
-where app-relative and root-relative paths are the same thing.
+probe):** `grpcbox_plugin` resolves the `{protos, [...]}` / `{o, ...}` paths
+relative to the *app's own `BaseDir`* (`apps/graphdb_api/`) when it runs
+inside an umbrella project — not relative to the workspace root. Paths
+written as `"apps/graphdb_api/priv/protos"` double-path and fail to find
+the `.proto` files. Use app-relative paths (`"priv/protos"`, `"src"`) for
+those two keys — this was not caught by this plan's earlier standalone
+`grpcbox_plugin` probes because those ran in a single-app project at the
+workspace root, where app-relative and root-relative paths are the same
+thing.
+
+**Second path correction (discovered during Task 5, when the first
+cross-file `import "common.proto";` was actually exercised by a service
+proto):** the gpb **include-path resolver** for cross-file `import`
+statements (as opposed to the top-level `{protos, [...]}` file discovery)
+did *not* pick up the same app-relative `{i, "priv/protos"}` entry —
+`node_service.proto`'s `import "common.proto";` failed to resolve until a
+*second*, root-relative `{i, "apps/graphdb_api/priv/protos"}` entry was
+added alongside it (both entries are needed; neither alone resolves both
+top-level discovery and cross-file imports). This hardcodes one app's path
+into the shared root `rebar.config` — acceptable while `graphdb_api` is
+the only app in this umbrella with `.proto` files; would need generalizing
+(or a per-app `rebar.config`) if a second one appears.
 
 Update the `{relx, [{release, {seerstone, "0.1.0"}, [...]}, ...]}` app list.
 It is currently `[nref, database, seerstone]`. Change to:
@@ -674,46 +689,46 @@ EOF
 -include_lib("grpcbox/include/grpcbox.hrl").
 
 not_found_maps_to_grpc_not_found_test() ->
-    {error, {Status, _Msg}, _Meta} = graphdb_api_error:to_status({error, not_found}),
+    {grpc_extended_error, #{status := Status}} = graphdb_api_error:to_status({error, not_found}),
     ?assertEqual(grpcbox_stream:code_to_status(5), Status).
 
 invalid_session_maps_to_unauthenticated_test() ->
-    {error, {Status, _Msg}, _Meta} = graphdb_api_error:to_status({error, invalid_session}),
+    {grpc_extended_error, #{status := Status}} = graphdb_api_error:to_status({error, invalid_session}),
     ?assertEqual(grpcbox_stream:code_to_status(16), Status).
 
 category_nodes_are_immutable_maps_to_invalid_argument_test() ->
-    {error, {Status, _Msg}, _Meta} =
+    {grpc_extended_error, #{status := Status}} =
         graphdb_api_error:to_status({error, category_nodes_are_immutable}),
     ?assertEqual(grpcbox_stream:code_to_status(3), Status).
 
 instance_only_attribute_tuple_maps_to_invalid_argument_test() ->
-    {error, {Status, _Msg}, _Meta} =
+    {grpc_extended_error, #{status := Status}} =
         graphdb_api_error:to_status({error, {instance_only_attribute, 999}}),
     ?assertEqual(grpcbox_stream:code_to_status(3), Status).
 
 not_implemented_maps_to_unimplemented_test() ->
-    {error, {Status, _Msg}, _Meta} =
+    {grpc_extended_error, #{status := Status}} =
         graphdb_api_error:to_status({error, not_implemented}),
     ?assertEqual(grpcbox_stream:code_to_status(12), Status).
 
 unknown_reason_falls_back_to_internal_test() ->
-    {error, {Status, _Msg}, _Meta} =
+    {grpc_extended_error, #{status := Status}} =
         graphdb_api_error:to_status({error, {something_nobody_curated, 42}}),
     ?assertEqual(grpcbox_stream:code_to_status(13), Status).
 
 bare_reason_without_error_wrapper_works_test() ->
-    {error, {Status, _Msg}, _Meta} = graphdb_api_error:to_status(not_found),
+    {grpc_extended_error, #{status := Status}} = graphdb_api_error:to_status(not_found),
     ?assertEqual(grpcbox_stream:code_to_status(5), Status).
 
 raw_reason_survives_in_trailer_test() ->
     Reason = {instance_only_attribute, 999},
-    {error, {_Status, _Msg}, #{trailers := Trailers}} =
+    {grpc_extended_error, #{trailers := Trailers}} =
         graphdb_api_error:to_status({error, Reason}),
     Encoded = maps:get(<<"x-erlang-reason-bin">>, Trailers),
     ?assertEqual(Reason, binary_to_term(base64:decode(Encoded), [safe])).
 
 message_is_human_readable_test() ->
-    {error, {_Status, Msg}, _Meta} =
+    {grpc_extended_error, #{message := Msg}} =
         graphdb_api_error:to_status({error, {ambiguous_relationship, [1, 2]}}),
     ?assert(is_binary(Msg)),
     ?assert(binary:match(Msg, <<"ambiguous_relationship">>) =/= nomatch).
@@ -777,8 +792,9 @@ build(Reason) ->
     Status = grpcbox_stream:code_to_status(code_for(Reason)),
     Message = unicode:characters_to_binary(io_lib:format("~p", [Reason])),
     TrailerVal = base64:encode(term_to_binary(Reason)),
-    {error, {Status, Message},
-     #{trailers => #{<<"x-erlang-reason-bin">> => TrailerVal}}}.
+    {grpc_extended_error,
+     #{status => Status, message => Message,
+       trailers => #{<<"x-erlang-reason-bin">> => TrailerVal}}}.
 
 %%-----------------------------------------------------------------------------
 %% code_for(Reason) -> 0..16  (standard gRPC status codes)
@@ -798,6 +814,25 @@ code_for({dangling_half_edge, _})          -> 13; % INTERNAL
 code_for(not_implemented)                  -> 12; % UNIMPLEMENTED
 code_for(_)                                -> 13. % INTERNAL (catch-all)
 ```
+
+**Return-shape correction (discovered during Task 5, verified against real
+grpcbox source — not the type spec):** `grpcbox_stream.erl` documents a
+`-type grpc_error_response()`/`grpc_callback_error()` shaped like `{error,
+grpc_error(), Meta}`, but its actual `handle_unary/3` dispatch only
+recognizes a callback's error return as `{grpc_error, _}` or
+`{grpc_extended_error, _}` — a bare `{error, ...}` 3-tuple falls through
+with no matching clause and crashes to a generic `UNKNOWN(2)` status,
+silently losing both the curated code and the trailer. `build/1` above
+already uses the corrected, verified shape:
+`{grpc_extended_error, #{status => Status, message => Message, trailers
+=> #{...}}}` — the one shape `handle_unary/3`'s `on_receive_data/2` `catch`
+clause actually recognizes and attaches trailers from (via
+`grpcbox_stream:add_trailers_from_error_data/2`). This was invisible to
+this task's own isolated EUnit tests (they only check `to_status/1`'s
+return value in isolation) — it surfaced only once Task 5 drove a real
+request through a live grpcbox server end-to-end. The type spec
+documentation is simply stale relative to the real dispatch logic; trust
+the verified shape above, not the type name.
 
 - [ ] **Step 4: Run to verify it passes**
 
@@ -1002,10 +1037,20 @@ stop_grpc(ListenOpts) ->
 %% server on `Port`. Verified signature: start_link/3 takes a *list* of
 %% {Transport, Host, Port, SslOpts} endpoint tuples, not positional
 %% host/port arguments.
+%%
+%% unlink/1 is load-bearing (discovered during Task 5): stop_client/1's
+%% grpcbox_channel:stop/1 terminates the channel gen_statem with reason
+%% {shutdown, force_delete} -- a non-normal exit that, propagated over a
+%% still-live link, kills the (non-trapping) CT test-case process before
+%% end_per_testcase/2 can run stop_grpc/1 / stop_stack/1. Without this,
+%% every test case after the first in a suite fails with
+%% {already_started, ...} because the prior test's listener/channel was
+%% never torn down.
 %%-----------------------------------------------------------------------------
 start_client(Module, Port) ->
-    {ok, _ChPid} = grpcbox_channel:start_link(
+    {ok, ChPid} = grpcbox_channel:start_link(
         Module, [{http, "127.0.0.1", Port, []}], #{}),
+    true = unlink(ChPid),
     {ok, Module}.
 
 %%-----------------------------------------------------------------------------
@@ -1144,6 +1189,23 @@ EOF
 ```
 
 ### Task 5: `NodeService` (mirrors `graphdb_mgr`)
+
+**Known limitation, accepted for v1 (discovered during implementation):**
+`graphdb_mgr:create_attribute/3`'s third argument is **not** a graph-style
+AVP list — it's a plain atom-keyed Erlang options map used for routing
+(`#{type => string}`, `#{reciprocal_name => ..., target_kind => ...}`; see
+`apps/graphdb_mgr.erl`'s `do_create_attribute/3` clauses and
+`apps/graphdb/test/graphdb_mgr_SUITE.erl:625-680` for real call shapes).
+`CreateAttributeRequest.avps` (a `repeated AVP`) cannot express this
+contract. **Accepted resolution:** `CreateAttribute`'s wire `avps` field is
+a documented no-op (the impl always passes `#{}`), so this RPC can create
+name attributes and bare relationship-type groupings but **not** typed
+literal attributes or full reciprocal relationship-attribute pairs — full
+attribute-creation capability is already covered properly by
+`AttributeService` (Task 8), which calls `graphdb_attr`'s creators
+directly with correctly-typed request fields. Revisit only if a caller
+needs typed-attribute creation specifically through `NodeService` (the
+`graphdb_mgr` coordinator surface) rather than through `AttributeService`.
 
 **Files:**
 - Create: `apps/graphdb_api/priv/protos/node_service.proto`
