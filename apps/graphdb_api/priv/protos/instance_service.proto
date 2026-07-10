@@ -1,0 +1,111 @@
+syntax = "proto3";
+package graphdb_api;
+
+import "common.proto";
+
+service InstanceService {
+  rpc CreateInstance (CreateInstanceRequest) returns (CreateInstanceReply) {}
+  rpc AddRelationship (AddRelationshipRequest) returns (AddRelationshipReply) {}
+  rpc RemoveRelationship (RemoveRelationshipRequest) returns (RemoveRelationshipReply) {}
+  rpc UpdateRelationship (UpdateRelationshipRequest) returns (UpdateRelationshipReply) {}
+  rpc UpdateRelationshipBoth (UpdateRelationshipBothRequest) returns (UpdateRelationshipBothReply) {}
+  rpc AddClassMembership (AddClassMembershipRequest) returns (AddClassMembershipReply) {}
+  rpc GetInstance (GetInstanceRequest) returns (GetInstanceReply) {}
+  rpc Children (ChildrenRequest) returns (ChildrenReply) {}
+  rpc CompositionalAncestors (CompositionalAncestorsRequest) returns (CompositionalAncestorsReply) {}
+  rpc ClassOf (ClassOfRequest) returns (ClassOfReply) {}
+  rpc ClassMemberships (ClassMembershipsRequest) returns (ClassMembershipsReply) {}
+  rpc ResolveValue (ResolveValueRequest) returns (ResolveValueReply) {}
+}
+
+message CreateInstanceRequest {
+  int64 project_id = 1;
+  string name = 2;
+  int64 class_nref = 3;
+  int64 parent_nref = 4;
+}
+message CreateInstanceReply {
+  int64 nref = 1;
+  Value report = 2;  // opaque (term_binary) — rule-firing report, not a stable schema
+}
+
+message AddRelationshipRequest {
+  int64 project_id = 1;
+  int64 source = 2;
+  int64 characterization = 3;
+  int64 target = 4;
+  int64 reciprocal = 5;
+  int64 template = 6;         // 0 = unset (source class's default template)
+  repeated AVP fwd_avps = 7;
+  repeated AVP rev_avps = 8;
+}
+message AddRelationshipReply {}
+
+message RemoveRelationshipRequest {
+  int64 project_id = 1;
+  int64 source = 2;
+  int64 characterization = 3;
+  int64 target = 4;
+  int64 template = 5;         // 0 = unset (match any template)
+}
+message RemoveRelationshipReply {}
+
+message UpdateRelationshipRequest {
+  int64 project_id = 1;
+  int64 source = 2;
+  int64 characterization = 3;
+  int64 target = 4;
+  int64 template = 5;         // 0 = unset
+  repeated AVPUpdate updates = 6;
+}
+message UpdateRelationshipReply {}
+
+message UpdateRelationshipBothRequest {
+  int64 project_id = 1;
+  int64 source = 2;
+  int64 characterization = 3;
+  int64 target = 4;
+  int64 template = 5;         // 0 = unset
+  repeated AVPUpdate fwd_updates = 6;
+  repeated AVPUpdate rev_updates = 7;
+}
+message UpdateRelationshipBothReply {}
+
+message AddClassMembershipRequest {
+  int64 project_id = 1;
+  int64 instance_nref = 2;
+  int64 class_nref = 3;
+}
+message AddClassMembershipReply {}
+
+message GetInstanceRequest { int64 nref = 1; }
+message GetInstanceReply { Node node = 1; }
+
+message ChildrenRequest { int64 nref = 1; }
+message ChildrenReply { repeated Node children = 1; }
+
+message CompositionalAncestorsRequest { int64 nref = 1; }
+message CompositionalAncestorsReply { repeated Node ancestors = 1; }
+
+message ClassOfRequest { int64 instance_nref = 1; }
+message ClassOfReply { int64 class_nref = 1; }
+
+message ClassMembershipsRequest { int64 instance_nref = 1; }
+message ClassMembershipsReply { repeated int64 classes = 1; }
+
+message ResolveSource {
+  oneof kind {
+    bool  local               = 1;  // true iff Source = local
+    int64 class_nref          = 2;  // Source = {class, Nref}
+    int64 compositional_nref  = 3;  // Source = {compositional, Nref}
+    int64 connected_nref      = 4;  // Source = {connected, Nref}
+  }
+}
+message ResolveValueRequest {
+  int64 instance_nref = 1;
+  int64 attr_nref = 2;
+}
+message ResolveValueReply {
+  Value value = 1;
+  ResolveSource source = 2;
+}
