@@ -24,11 +24,26 @@
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+%%---------------------------------------------------------------------
+%% Record definitions (match graphdb internal #relationship{} record) --
+%% needed to inspect graphdb_mgr:get_relationships/1 results directly.
+%%---------------------------------------------------------------------
+-record(relationship, {
+    id,
+    kind,
+    source_nref,
+    characterization,
+    target_nref,
+    reciprocal,
+    avps
+}).
+
 -export([all/0, suite/0]).
 -export([init_per_testcase/2, end_per_testcase/2]).
 -export([create_instance_under_registered_project/1,
          create_instance_rejects_missing_project/1,
          add_and_remove_relationship_round_trip/1,
+         add_relationship_unset_template_with_avps/1,
          update_relationship_avps/1,
          add_class_membership_then_class_memberships/1,
          get_instance_children_and_ancestors/1,
@@ -39,6 +54,7 @@ suite() -> [{timetrap, {seconds, 30}}].
 all() -> [create_instance_under_registered_project,
           create_instance_rejects_missing_project,
           add_and_remove_relationship_round_trip,
+          add_relationship_unset_template_with_avps,
           update_relationship_avps,
           add_class_membership_then_class_memberships,
           get_instance_children_and_ancestors,
@@ -92,6 +108,36 @@ add_and_remove_relationship_round_trip(_Config) ->
     {ok, #{}, _} = graphdb_api_instance_service_client:remove_relationship(
         #{project_id => ProjNref, source => A, characterization => RelNref, target => B, template => 0},
         #{channel => ?MODULE}).
+
+%% Exercises the {0, has-AVPs} branch of
+%% graphdb_api_instance_service_impl:add_relationship/2: wire template is
+%% unset (0) but fwd_avps is non-empty, forcing resolution of the source
+%% class's real default template via graphdb_instance:class_of/1 +
+%% graphdb_class:default_template/1 before calling the /7 arity. Verifies
+%% both that the call succeeds and that the AVP actually landed on the
+%% created relationship row.
+add_relationship_unset_template_with_avps(_Config) ->
+    {ok, ProjNref} = graphdb_project:register_project("Acme7"),
+    {ok, ClassNref} = graphdb_class:create_class("Widget8", 3),
+    {ok, {RelNref, RecipNref}} = graphdb_attr:create_relationship_attribute_pair(
+        "linkedTo3", "linkedFrom3", instance),
+    {ok, WeightAttr} = graphdb_attr:create_literal_attribute("weight2", integer),
+    {ok, Session} = graphdb_project:open_session(ProjNref),
+    {ok, A, _} = graphdb_instance:create_instance(Session, "a3", ClassNref, ProjNref),
+    {ok, B, _} = graphdb_instance:create_instance(Session, "b3", ClassNref, ProjNref),
+    FwdAvp = #{attribute => WeightAttr, value => graphdb_api_value:term_to_value(42)},
+    {ok, #{}, _} = graphdb_api_instance_service_client:add_relationship(
+        #{project_id => ProjNref, source => A, characterization => RelNref, target => B,
+          reciprocal => RecipNref, template => 0, fwd_avps => [FwdAvp], rev_avps => []},
+        #{channel => ?MODULE}),
+    {ok, Rels} = graphdb_mgr:get_relationships(A),
+    ?assert(lists:any(
+        fun(#relationship{target_nref = T, characterization = C, avps = AVPs}) ->
+            T =:= B andalso C =:= RelNref andalso
+            lists:any(fun(#{attribute := Attr, value := Val}) ->
+                Attr =:= WeightAttr andalso Val =:= 42
+            end, AVPs)
+        end, Rels)).
 
 update_relationship_avps(_Config) ->
     {ok, ProjNref} = graphdb_project:register_project("Acme3"),
