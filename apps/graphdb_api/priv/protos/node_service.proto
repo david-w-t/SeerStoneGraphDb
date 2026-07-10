@@ -1,0 +1,114 @@
+syntax = "proto3";
+package graphdb_api;
+
+import "common.proto";
+
+service NodeService {
+  rpc GetNode (GetNodeRequest) returns (GetNodeReply) {}
+  rpc GetRelationships (GetRelationshipsRequest) returns (GetRelationshipsReply) {}
+  rpc CreateAttribute (CreateAttributeRequest) returns (CreateAttributeReply) {}
+  rpc CreateClass (CreateClassRequest) returns (CreateClassReply) {}
+  rpc RetireNode (RetireNodeRequest) returns (RetireNodeReply) {}
+  rpc UnretireNode (UnretireNodeRequest) returns (UnretireNodeReply) {}
+  rpc UpdateNodeAvps (UpdateNodeAvpsRequest) returns (UpdateNodeAvpsReply) {}
+  rpc DeleteNode (DeleteNodeRequest) returns (DeleteNodeReply) {}
+  rpc Mutate (MutateRequest) returns (MutateReply) {}
+}
+
+message GetNodeRequest { int64 nref = 1; }
+message GetNodeReply { Node node = 1; }
+
+enum Direction {
+  DIRECTION_UNSPECIFIED = 0;
+  OUTGOING = 1;
+  INCOMING = 2;
+  BOTH = 3;
+}
+
+message GetRelationshipsRequest {
+  int64 nref = 1;
+  Direction direction = 2;
+}
+message GetRelationshipsReply { repeated Relationship relationships = 1; }
+
+message CreateAttributeRequest {
+  string name = 1;
+  int64 parent_nref = 2;
+  repeated AVP avps = 3;
+}
+message CreateAttributeReply { int64 nref = 1; }
+
+message CreateClassRequest {
+  string name = 1;
+  int64 parent_class_nref = 2;
+}
+message CreateClassReply { int64 nref = 1; }
+
+message RetireNodeRequest { int64 nref = 1; }
+message RetireNodeReply {}
+
+message UnretireNodeRequest { int64 nref = 1; }
+message UnretireNodeReply {}
+
+message UpdateNodeAvpsRequest {
+  int64 nref = 1;
+  repeated AVPUpdate updates = 2;
+}
+message UpdateNodeAvpsReply {}
+
+message DeleteNodeRequest { int64 nref = 1; }
+message DeleteNodeReply {}
+
+// --- mutate/1 batch grammar (graphdb_mgr:mutate/1) ---
+
+message AddRelationshipOp {
+  int64 source = 1;
+  int64 characterization = 2;
+  int64 target = 3;
+  int64 reciprocal = 4;
+  int64 template = 5;         // 0 = unset (use source class's default template)
+  repeated AVP fwd_avps = 6;  // empty = no per-direction AVPs
+  repeated AVP rev_avps = 7;
+}
+message RetireNodeOp { int64 nref = 1; }
+message UnretireNodeOp { int64 nref = 1; }
+message UpdateNodeAvpsOp {
+  int64 nref = 1;
+  repeated AVPUpdate updates = 2;
+}
+message RemoveRelationshipOp {
+  int64 source = 1;
+  int64 characterization = 2;
+  int64 target = 3;
+  int64 template = 4;         // 0 = unset (match any template)
+}
+message UpdateRelationshipOp {
+  int64 source = 1;
+  int64 characterization = 2;
+  int64 target = 3;
+  int64 template = 4;         // 0 = unset
+  repeated AVPUpdate updates = 5;
+}
+message UpdateRelationshipBothOp {
+  int64 source = 1;
+  int64 characterization = 2;
+  int64 target = 3;
+  int64 template = 4;         // 0 = unset
+  repeated AVPUpdate fwd_updates = 5;
+  repeated AVPUpdate rev_updates = 6;
+}
+
+message MutationOp {
+  oneof op {
+    AddRelationshipOp add_relationship = 1;
+    RetireNodeOp retire_node = 2;
+    UnretireNodeOp unretire_node = 3;
+    UpdateNodeAvpsOp update_node_avps = 4;
+    RemoveRelationshipOp remove_relationship = 5;
+    UpdateRelationshipOp update_relationship = 6;
+    UpdateRelationshipBothOp update_relationship_both = 7;
+  }
+}
+
+message MutateRequest { repeated MutationOp ops = 1; }
+message MutateReply {}

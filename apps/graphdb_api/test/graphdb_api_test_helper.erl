@@ -139,10 +139,17 @@ stop_grpc(ListenOpts) ->
 %% server on `Port`. Verified signature: start_link/3 takes a *list* of
 %% {Transport, Host, Port, SslOpts} endpoint tuples, not positional
 %% host/port arguments.
+%%
+%% Unlinks from the channel process immediately: grpcbox_channel:stop/1
+%% (called by stop_client/1) terminates the gen_statem with reason
+%% {shutdown, force_delete}, a non-normal reason that -- left linked --
+%% propagates an EXIT signal to this (non-trapping) CT test-case process
+%% and kills it, aborting end_per_testcase before stop_stack/1 runs.
 %%-----------------------------------------------------------------------------
 start_client(Module, Port) ->
-    {ok, _ChPid} = grpcbox_channel:start_link(
+    {ok, ChPid} = grpcbox_channel:start_link(
         Module, [{http, "127.0.0.1", Port, []}], #{}),
+    true = unlink(ChPid),
     {ok, Module}.
 
 %%-----------------------------------------------------------------------------

@@ -42,8 +42,27 @@ end)).
 -export([term_to_value/1, value_to_term/1,
          avp_to_pb/1, pb_to_avp/1,
          avp_update_to_term/1,
+         node_to_pb/1, relationship_to_pb/1,
          node_kind_to_atom/1, atom_to_node_kind/1,
          relationship_kind_to_atom/1, atom_to_relationship_kind/1]).
+
+-record(node, {
+    nref,
+    kind,
+    parents = [],
+    classes = [],
+    attribute_value_pairs
+}).
+
+-record(relationship, {
+    id,
+    kind,
+    source_nref,
+    characterization,
+    target_nref,
+    reciprocal,
+    avps
+}).
 
 %%-----------------------------------------------------------------------------
 %% term_to_value(term()) -> common_pb:value()
@@ -111,6 +130,33 @@ avp_update_to_term(#{attribute := Attr, value := Value} = Update) ->
         true  -> #{attribute => Attr};
         false -> #{attribute => Attr, value => value_to_term(Value)}
     end.
+
+%%-----------------------------------------------------------------------------
+%% node_to_pb(#node{}) -> common_pb:node()
+%%-----------------------------------------------------------------------------
+node_to_pb(#node{nref = Nref, kind = Kind, parents = Parents, classes = Classes,
+                  attribute_value_pairs = AVPs}) ->
+    AVPList = case AVPs of undefined -> []; L -> L end,
+    #{nref => Nref,
+      kind => atom_to_node_kind(Kind),
+      parents => Parents,
+      classes => Classes,
+      attribute_value_pairs => [avp_to_pb(A) || A <- AVPList]}.
+
+%%-----------------------------------------------------------------------------
+%% relationship_to_pb(#relationship{}) -> common_pb:relationship()
+%%-----------------------------------------------------------------------------
+relationship_to_pb(#relationship{id = Id, kind = Kind, source_nref = S,
+                                  characterization = C, target_nref = T,
+                                  reciprocal = R, avps = AVPs}) ->
+    AVPList = case AVPs of undefined -> []; L -> L end,
+    #{id => Id,
+      kind => atom_to_relationship_kind(Kind),
+      source_nref => S,
+      characterization => C,
+      target_nref => T,
+      reciprocal => R,
+      avps => [avp_to_pb(A) || A <- AVPList]}.
 
 %%-----------------------------------------------------------------------------
 %% Node/Relationship kind <-> proto enum

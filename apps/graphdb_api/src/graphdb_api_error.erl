@@ -6,7 +6,7 @@
 %% Author: David W. Thomas
 %% Created: 2026-07-08
 %% Description: Single chokepoint mapping an Erlang {error, Reason} (or
-%%              bare Reason) into a grpcbox_stream:grpc_error_response().
+%%              bare Reason) into a grpcbox_stream:grpc_extended_error_response().
 %%              A curated table maps known reasons to the closest gRPC
 %%              status code (design §5); anything uncurated falls back
 %%              to INTERNAL. The raw Erlang reason always also survives,
@@ -18,6 +18,23 @@
 %%---------------------------------------------------------------------
 %% Rev PA1 Date: 2026-07-08 Author: David W. Thomas
 %% Initial implementation: curated status table + trailer passthrough.
+%%---------------------------------------------------------------------
+%% Rev PA2 Date: 2026-07-09 Author: David W. Thomas
+%% Fix return shape: grpcbox 0.17.1's grpcbox_stream:handle_unary/3 only
+%% recognizes a service callback's returned error as {grpc_error, _} or
+%% {grpc_extended_error, _} (thrown from there); a bare {error, {Status,
+%% Msg}, Meta} 3-tuple (the shape this module previously returned, matching
+%% the -type grpc_error_response()/grpc_callback_error() spec in
+%% grpcbox_stream.erl -- which does not match that module's own runtime
+%% handle_unary/3 logic in this version) falls through handle_unary/3's
+%% case clauses uncaught, crashing to a generic UNKNOWN(2) and losing both
+%% the curated status and the x-erlang-reason-bin trailer. Discovered via
+%% graphdb_api_node_service_SUITE's error-mapping CT cases (first real
+%% wire-level exercise of this module -- Task 3's EUnit coverage only
+%% checked to_status/1's return shape, never a live grpcbox round trip).
+%% Now returns {grpc_extended_error, #{status, message, trailers}}, the
+%% one shape handle_unary/3 both recognizes AND carries trailers with
+%% (grpcbox_stream:add_trailers_from_error_data/2).
 %%---------------------------------------------------------------------
 -module(graphdb_api_error).
 
@@ -37,7 +54,8 @@ end)).
 -export([to_status/1]).
 
 %%-----------------------------------------------------------------------------
-%% to_status({error, Reason} | Reason) -> grpcbox_stream:grpc_error_response()
+%% to_status({error, Reason} | Reason) ->
+%%     grpcbox_stream:grpc_extended_error_response()
 %%-----------------------------------------------------------------------------
 to_status({error, Reason}) ->
     build(Reason);
@@ -48,8 +66,9 @@ build(Reason) ->
     Status = grpcbox_stream:code_to_status(code_for(Reason)),
     Message = unicode:characters_to_binary(io_lib:format("~p", [Reason])),
     TrailerVal = base64:encode(term_to_binary(Reason)),
-    {error, {Status, Message},
-     #{trailers => #{<<"x-erlang-reason-bin">> => TrailerVal}}}.
+    {grpc_extended_error,
+     #{status => Status, message => Message,
+       trailers => #{<<"x-erlang-reason-bin">> => TrailerVal}}}.
 
 %%-----------------------------------------------------------------------------
 %% code_for(Reason) -> 0..16  (standard gRPC status codes)
