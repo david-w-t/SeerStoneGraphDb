@@ -1,0 +1,73 @@
+syntax = "proto3";
+package graphdb_api;
+
+import "common.proto";
+
+service RulesService {
+  rpc CreateCompositionRule (CreateCompositionRuleRequest) returns (CreateCompositionRuleReply) {}
+  rpc CreateConnectionRule (CreateConnectionRuleRequest) returns (CreateConnectionRuleReply) {}
+  rpc GetRule (GetRuleRequest) returns (GetRuleReply) {}
+  rpc RulesForClass (RulesForClassRequest) returns (RulesForClassReply) {}
+  rpc CompositionRulesForClass (CompositionRulesForClassRequest) returns (CompositionRulesForClassReply) {}
+  rpc ConnectionRulesForClass (ConnectionRulesForClassRequest) returns (ConnectionRulesForClassReply) {}
+  rpc EffectiveRulesForClass (EffectiveRulesForClassRequest) returns (EffectiveRulesForClassReply) {}
+  rpc EffectiveConnectionRules (EffectiveConnectionRulesRequest) returns (EffectiveConnectionRulesReply) {}
+  rpc ListRules (ListRulesRequest) returns (ListRulesReply) {}
+}
+
+enum RuleMode {
+  RULE_MODE_UNSPECIFIED = 0;
+  MANDATORY = 1;
+  AUTO = 2;
+  PROPOSE = 3;
+}
+
+message Multiplicity {
+  int64 min = 1;
+  int64 max = 2;        // ignored when unbounded = true
+  bool unbounded = 3;
+}
+
+message CreateCompositionRuleRequest {
+  string name = 1;
+  int64 parent_class = 2;
+  int64 child_class = 3;
+  RuleMode mode = 4;
+  Multiplicity multiplicity = 5;
+  int64 template_nref = 6;   // 0 = unset
+  string name_pattern = 7;   // "" = unset (Opts #{name_pattern => ...})
+}
+message CreateCompositionRuleReply { int64 rule_nref = 1; }
+
+message CreateConnectionRuleRequest {
+  string name = 1;
+  int64 source_class = 2;
+  int64 characterization = 3;
+  int64 reciprocal = 4;
+  int64 target_class = 5;
+  RuleMode mode = 6;
+  Multiplicity multiplicity = 7;
+  int64 template_nref = 8;   // 0 = unset
+}
+message CreateConnectionRuleReply { int64 rule_nref = 1; }
+
+message GetRuleRequest { int64 rule_nref = 1; }
+message GetRuleReply { Node node = 1; }
+
+message RulesForClassRequest { int64 class_nref = 1; }
+message RulesForClassReply { Value rules = 1; }  // opaque -- see plan Task 9 note
+
+message CompositionRulesForClassRequest { int64 class_nref = 1; }
+message CompositionRulesForClassReply { Value rules = 1; }
+
+message ConnectionRulesForClassRequest { int64 class_nref = 1; }
+message ConnectionRulesForClassReply { Value rules = 1; }
+
+message EffectiveRulesForClassRequest { int64 class_nref = 1; }
+message EffectiveRulesForClassReply { Value rules = 1; }
+
+message EffectiveConnectionRulesRequest { int64 class_nref = 1; }
+message EffectiveConnectionRulesReply { Value rules = 1; }
+
+message ListRulesRequest {}
+message ListRulesReply { repeated Node rules = 1; }
