@@ -36,6 +36,12 @@
 %% one shape handle_unary/3 both recognizes AND carries trailers with
 %% (grpcbox_stream:add_trailers_from_error_data/2).
 %%---------------------------------------------------------------------
+%% Rev PA3 Date: 2026-07-10 Author: David W. Thomas
+%% Add {invalid_mode, _} -> INVALID_ARGUMENT (3), mirroring the existing
+%% {invalid_direction, _} clause. Task 9 review fix: RulesService's
+%% mode_to_atom/1 now routes an unrecognized/unspecified RuleMode enum
+%% value through this chokepoint instead of crashing uncaught.
+%%---------------------------------------------------------------------
 -module(graphdb_api_error).
 
 -revision('Revision: PA1 ').
@@ -82,6 +88,7 @@ code_for(category_nodes_are_immutable)     -> 3;  % INVALID_ARGUMENT
 code_for(permanent_node_immutable)         -> 3;
 code_for({instance_only_attribute, _})     -> 3;
 code_for({invalid_direction, _})           -> 3;
+code_for({invalid_mode, _})                -> 3;
 code_for({class_not_instantiable, _})      -> 9;  % FAILED_PRECONDITION
 code_for({ambiguous_relationship, _})      -> 9;
 code_for({dangling_half_edge, _})          -> 13; % INTERNAL
