@@ -1,0 +1,53 @@
+syntax = "proto3";
+package graphdb_api;
+
+import "common.proto";
+
+service AttributeService {
+  rpc CreateNameAttribute (CreateNameAttributeRequest) returns (CreateNameAttributeReply) {}
+  rpc CreateLiteralAttribute (CreateLiteralAttributeRequest) returns (CreateLiteralAttributeReply) {}
+  rpc CreateRelationshipAttributePair (CreateRelationshipAttributePairRequest) returns (CreateRelationshipAttributePairReply) {}
+  rpc CreateRelationshipType (CreateRelationshipTypeRequest) returns (CreateRelationshipTypeReply) {}
+  rpc GetAttribute (GetAttributeRequest) returns (GetAttributeReply) {}
+  rpc ListAttributes (ListAttributesRequest) returns (ListAttributesReply) {}
+  rpc ListRelationshipTypes (ListRelationshipTypesRequest) returns (ListRelationshipTypesReply) {}
+}
+
+message CreateNameAttributeRequest {
+  string name = 1;
+  int64 parent_nref = 2;   // 0 = unset (default parent, nref 6 Names)
+}
+message CreateNameAttributeReply { int64 nref = 1; }
+
+message CreateLiteralAttributeRequest {
+  string name = 1;
+  string type = 2;         // free-form literal type label, e.g. "string", "kilogram"
+  int64 parent_nref = 3;   // 0 = unset (default parent, nref 7 Literals)
+}
+message CreateLiteralAttributeReply { int64 nref = 1; }
+
+message CreateRelationshipAttributePairRequest {
+  string name = 1;
+  string reciprocal_name = 2;
+  NodeKind target_kind = 3;
+  int64 parent_nref = 4;   // 0 = unset (default parent, nref 8 Relationships)
+}
+message CreateRelationshipAttributePairReply {
+  int64 forward_nref = 1;
+  int64 reciprocal_nref = 2;
+}
+
+message CreateRelationshipTypeRequest {
+  string name = 1;
+  int64 parent_nref = 2;   // 0 = unset (default parent, nref 8 Relationships)
+}
+message CreateRelationshipTypeReply { int64 nref = 1; }
+
+message GetAttributeRequest { int64 nref = 1; }
+message GetAttributeReply { Node node = 1; }
+
+message ListAttributesRequest {}
+message ListAttributesReply { repeated Node attributes = 1; }
+
+message ListRelationshipTypesRequest {}
+message ListRelationshipTypesReply { repeated Node relationship_types = 1; }
