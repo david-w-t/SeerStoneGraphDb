@@ -1,0 +1,73 @@
+syntax = "proto3";
+package graphdb_api;
+
+import "common.proto";
+
+service ClassService {
+  rpc CreateClass (CreateClassRequest) returns (CreateClassReply) {}
+  rpc AddSuperclass (AddSuperclassRequest) returns (AddSuperclassReply) {}
+  rpc AddQualifyingCharacteristic (AddQualifyingCharacteristicRequest) returns (AddQualifyingCharacteristicReply) {}
+  rpc BindQcValue (BindQcValueRequest) returns (BindQcValueReply) {}
+  rpc AddTemplate (AddTemplateRequest) returns (AddTemplateReply) {}
+  rpc GetClass (GetClassRequest) returns (GetClassReply) {}
+  rpc Subclasses (SubclassesRequest) returns (SubclassesReply) {}
+  rpc Ancestors (AncestorsRequest) returns (AncestorsReply) {}
+  rpc GetTemplate (GetTemplateRequest) returns (GetTemplateReply) {}
+  rpc TemplatesForClass (TemplatesForClassRequest) returns (TemplatesForClassReply) {}
+  rpc DefaultTemplate (DefaultTemplateRequest) returns (DefaultTemplateReply) {}
+  rpc IsInstantiable (IsInstantiableRequest) returns (IsInstantiableReply) {}
+}
+
+message CreateClassRequest {
+  string name = 1;
+  int64 parent_class_nref = 2;
+  repeated AVP avps = 3;
+}
+message CreateClassReply { int64 nref = 1; }
+
+message AddSuperclassRequest {
+  int64 class_nref = 1;
+  int64 additional_parent_nref = 2;
+}
+message AddSuperclassReply {}
+
+message AddQualifyingCharacteristicRequest {
+  int64 class_nref = 1;
+  int64 attr_nref = 2;
+  bool instance_only = 3;
+}
+message AddQualifyingCharacteristicReply {}
+
+message BindQcValueRequest {
+  int64 class_nref = 1;
+  int64 attr_nref = 2;
+  Value value = 3;
+}
+message BindQcValueReply {}
+
+message AddTemplateRequest {
+  int64 class_nref = 1;
+  string name = 2;
+}
+message AddTemplateReply { int64 nref = 1; }
+
+message GetClassRequest { int64 nref = 1; }
+message GetClassReply { Node node = 1; }
+
+message SubclassesRequest { int64 class_nref = 1; }
+message SubclassesReply { repeated Node subclasses = 1; }
+
+message AncestorsRequest { int64 class_nref = 1; }
+message AncestorsReply { repeated Node ancestors = 1; }
+
+message GetTemplateRequest { int64 nref = 1; }
+message GetTemplateReply { Node node = 1; }
+
+message TemplatesForClassRequest { int64 class_nref = 1; }
+message TemplatesForClassReply { repeated Node templates = 1; }
+
+message DefaultTemplateRequest { int64 class_nref = 1; }
+message DefaultTemplateReply { int64 template_nref = 1; }
+
+message IsInstantiableRequest { int64 class_nref = 1; }
+message IsInstantiableReply { bool instantiable = 1; }
