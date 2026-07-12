@@ -43,11 +43,21 @@ find_path_between_composition_parent_and_child(_Config) ->
     ?assertEqual(Parent, hd(Path)),
     ?assertEqual(Child, lists:last(Path)).
 
+%% Two instances in two DIFFERENT projects are genuinely BFS-disconnected:
+%% each instance's only composition arc is to its own project anchor, and
+%% the anchors' only further composition arc is to the shared `Projects`
+%% category (nref 5), which is a scaffold node (is_scaffold_node/1) and is
+%% never traversed (graphdb_query:expand_arcs/8). So the frontier empties
+%% out after two hops, well within max_depth => 5, and bfs/8 hits its
+%% first clause (frontier == []) -- the genuine {ok, no_path} branch --
+%% rather than the depth-exhausted {partial, ...} branch.
 find_path_reports_no_path_when_unreachable(_Config) ->
-    {ok, ProjNref} = graphdb_project:register_project("Acme9"),
+    {ok, ProjNrefA} = graphdb_project:register_project("Acme9a"),
+    {ok, ProjNrefB} = graphdb_project:register_project("Acme9b"),
     {ok, ClassNref} = graphdb_class:create_class("Widget9", 3),
-    {ok, Session} = graphdb_project:open_session(ProjNref),
-    {ok, A, _} = graphdb_instance:create_instance(Session, "a9", ClassNref, ProjNref),
-    {ok, B, _} = graphdb_instance:create_instance(Session, "b9", ClassNref, ProjNref),
+    {ok, SessionA} = graphdb_project:open_session(ProjNrefA),
+    {ok, SessionB} = graphdb_project:open_session(ProjNrefB),
+    {ok, A, _} = graphdb_instance:create_instance(SessionA, "a9", ClassNref, ProjNrefA),
+    {ok, B, _} = graphdb_instance:create_instance(SessionB, "b9", ClassNref, ProjNrefB),
     {ok, #{found := false, path := []}, _} = graphdb_api_query_service_client:find_path(
-        #{from => A, to => B, max_depth => 0}, #{channel => ?MODULE}).
+        #{from => A, to => B, max_depth => 5}, #{channel => ?MODULE}).
