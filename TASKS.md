@@ -520,10 +520,12 @@ paths.
 hot-upgrade deployment is planned — premature until there is a versioned
 release to upgrade in place.
 
-### Phased application startup *(deferred)*
+### Phased application startup — RESOLVED (via release app-list order, not `start_phases`)
 
-No `.app.src` defines `start_phases`, so `start_phase/3` is never called.
-Revisit when an externally-visible entry point (an API server or socket
-listener) is added to `seerstone` that must not accept connections until
-the full graphdb stack is bootstrapped — phased startup then closes the
-window between port-open and data-ready.
+The internal gRPC API (`docs/designs/grpc-proxy-api-design.md`) is exactly
+the externally-visible entry point this item anticipated. Resolved without
+`start_phases`: `grpcbox` (which auto-starts its configured listener on its
+own application start) is sequenced *after* `database` in the `relx`
+release app list, so OTP's sequential application-start guarantee means the
+graphdb stack — bootstrap included — is always fully up before the gRPC
+port opens. See design §6.1 for the full mechanism.

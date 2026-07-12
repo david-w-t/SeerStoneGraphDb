@@ -231,9 +231,13 @@ time, a key matching more than one logical edge yields
 
 ## 5. Supervision Tree
 
-Five OTP applications started by `application_master` in dependency order.
-`graphdb` declares `mnesia` and `nref` as dependencies; `database` declares
-`graphdb` and `dictionary`; `seerstone` declares `nref` and `database`.
+Seven OTP applications started by `application_master` in dependency
+order: five original SeerStone applications plus `grpcbox` (third-party
+gRPC/HTTP2 dependency) and `graphdb_api` (the internal gRPC API — see
+`docs/designs/grpc-proxy-api-design.md`). `graphdb` declares `mnesia` and
+`nref` as dependencies; `database` declares `graphdb` and `dictionary`;
+`seerstone` declares `nref` and `database`; `graphdb_api` declares
+`grpcbox`, `graphdb`, and `database`.
 
 ```
 nref (application — started first)
@@ -265,6 +269,18 @@ database (application — started after graphdb + dictionary)
 seerstone (application — top-level; started last)
   └── seerstone_sup              — empty supervisor; placeholder for future
                                    seerstone-specific workers
+
+grpcbox (application — started after seerstone; third-party dependency)
+  └── (owns its own supervision tree; auto-starts the configured gRPC
+       listener from sys.config's {grpcbox, [{servers, [...]}]} entry —
+       see docs/designs/grpc-proxy-api-design.md §6.1. Sequenced after
+       `database` so the port never opens before the graphdb stack —
+       bootstrap included — has fully started.)
+
+graphdb_api (application — started last)
+  └── graphdb_api_sup            — empty supervisor; the gRPC listener is
+                                   owned by grpcbox, not graphdb_api (§6.1).
+                                   Reserved for future interceptor/auth state.
 ```
 
 `graphdb` and `dictionary` are independent peer applications.
