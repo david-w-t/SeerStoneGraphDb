@@ -27,6 +27,16 @@ not_implemented_maps_to_unimplemented_test() ->
         graphdb_api_error:to_status({error, not_implemented}),
     ?assertEqual(grpcbox_stream:code_to_status(12), Status).
 
+no_default_template_tuple_maps_to_failed_precondition_test() ->
+    {grpc_extended_error, #{status := Status}} =
+        graphdb_api_error:to_status({error, {no_default_template, 123}}),
+    ?assertEqual(grpcbox_stream:code_to_status(9), Status).
+
+no_class_membership_tuple_maps_to_failed_precondition_test() ->
+    {grpc_extended_error, #{status := Status}} =
+        graphdb_api_error:to_status({error, {no_class_membership, 456}}),
+    ?assertEqual(grpcbox_stream:code_to_status(9), Status).
+
 unknown_reason_falls_back_to_internal_test() ->
     {grpc_extended_error, #{status := Status}} =
         graphdb_api_error:to_status({error, {something_nobody_curated, 42}}),

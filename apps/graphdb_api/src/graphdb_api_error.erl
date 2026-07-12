@@ -42,6 +42,15 @@
 %% mode_to_atom/1 now routes an unrecognized/unspecified RuleMode enum
 %% value through this chokepoint instead of crashing uncaught.
 %%---------------------------------------------------------------------
+%% Rev PA4 Date: 2026-07-12 Author: David W. Thomas
+%% Add {no_default_template, _} and {no_class_membership, _} ->
+%% FAILED_PRECONDITION (9), mirroring the existing {class_not_instantiable,
+%% _}/{ambiguous_relationship, _} clauses. Final whole-branch review polish:
+%% both reasons are constructed locally by
+%% graphdb_api_instance_service_impl's add_relationship/2 (client/precondition
+%% errors, not internal server failures) and previously fell through to the
+%% generic INTERNAL(13) catch-all.
+%%---------------------------------------------------------------------
 -module(graphdb_api_error).
 
 -revision('Revision: PA1 ').
@@ -91,6 +100,8 @@ code_for({invalid_direction, _})           -> 3;
 code_for({invalid_mode, _})                -> 3;
 code_for({class_not_instantiable, _})      -> 9;  % FAILED_PRECONDITION
 code_for({ambiguous_relationship, _})      -> 9;
+code_for({no_default_template, _})         -> 9;
+code_for({no_class_membership, _})         -> 9;
 code_for({dangling_half_edge, _})          -> 13; % INTERNAL
 code_for(not_implemented)                  -> 12; % UNIMPLEMENTED
 code_for(_)                                -> 13. % INTERNAL (catch-all)
