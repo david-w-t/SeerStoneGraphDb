@@ -1,0 +1,18 @@
+syntax = "proto3";
+package graphdb_api;
+
+service QueryService {
+  rpc FindPath (FindPathRequest) returns (FindPathReply) {}
+}
+
+message FindPathRequest {
+  int64 from = 1;
+  int64 to = 2;
+  int64 max_depth = 3;
+}
+
+message FindPathReply {
+  bool found = 1;          // true iff a complete path was found
+  repeated int64 path = 2; // the path (found=true), or the best-effort
+                            // prefix reached before max_depth (found=false)
+}
