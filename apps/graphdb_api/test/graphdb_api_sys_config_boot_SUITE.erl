@@ -53,18 +53,34 @@ all() -> [sys_config_grpcbox_servers_entry_boots_and_answers].
 %% init_per_testcase/2
 %%
 %% Reads config/sys.config's real `grpcbox` `servers` entry (locating the
-%% repo root via code:lib_dir/1 + an upward walk to the rebar.config
-%% marker, since Common Test's own working directory during a run is its
-%% log directory, not the invocation directory -- file:get_cwd/0 is not
-%% reliable here), stops grpcbox if some earlier suite already started it
-%% (its own start/2 was already run with a different -- typically empty
-%% -- `servers` env, so a bare ensure_all_started/1 here would be a
-%% silent no-op), installs the real config as the `grpcbox` application
-%% env, then starts it for real so grpcbox_app:start/2 ->
-%% maybe_start_server/1 runs against that real data.
+%% repo root via an upward walk to the rebar.config marker, starting from
+%% this module's own compile-time source path (?FILE), since Common
+%% Test's own working directory during a run is its log directory, not
+%% the invocation directory -- file:get_cwd/0 is not reliable here).
+%%
+%% ?FILE, not code:lib_dir(graphdb_api), is the right anchor: ?FILE is
+%% the absolute path of *this source file* as recorded by the compiler,
+%% independent of where the compiled .beam output ends up. code:lib_dir/1
+%% instead resolves to wherever the app's *build output* landed, which
+%% breaks under scripts/test-ct-parallel.sh's per-suite REBAR_BASE_DIR
+%% isolation (an out-of-checkout temp build tree with no rebar.config
+%% anywhere in its ancestor chain) -- empirically reproduced:
+%% `bash scripts/test-ct-parallel.sh graphdb_api_sys_config_boot` failed
+%% every testcase in init_per_testcase with
+%% `{repo_root_not_found, "rebar.config"}` before this fix, because
+%% rebar3 still compiles this file from its real checkout location even
+%% when REBAR_BASE_DIR redirects the build output elsewhere, so ?FILE
+%% keeps pointing at the real checkout tree.
+%%
+%% Stops grpcbox if some earlier suite already started it (its own
+%% start/2 was already run with a different -- typically empty --
+%% `servers` env, so a bare ensure_all_started/1 here would be a silent
+%% no-op), installs the real config as the `grpcbox` application env,
+%% then starts it for real so grpcbox_app:start/2 -> maybe_start_server/1
+%% runs against that real data.
 %%-----------------------------------------------------------------------------
 init_per_testcase(_TC, Config0) ->
-    RepoRoot = find_repo_root(code:lib_dir(graphdb_api)),
+    RepoRoot = find_repo_root(filename:dirname(?FILE)),
     SysConfigPath = filename:join(RepoRoot, "config/sys.config"),
     {ok, [Terms]} = file:consult(SysConfigPath),
     {grpcbox, GrpcboxEnv} = lists:keyfind(grpcbox, 1, Terms),
