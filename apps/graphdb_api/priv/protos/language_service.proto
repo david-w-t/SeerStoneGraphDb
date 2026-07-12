@@ -1,0 +1,46 @@
+syntax = "proto3";
+package graphdb_api;
+
+import "common.proto";
+
+service LanguageService {
+  rpc RegisterLanguage (RegisterLanguageRequest) returns (RegisterLanguageReply) {}
+  rpc RegisterDialect (RegisterDialectRequest) returns (RegisterDialectReply) {}
+  rpc LookupLanguageNref (LookupLanguageNrefRequest) returns (LookupLanguageNrefReply) {}
+  rpc SetLabels (SetLabelsRequest) returns (SetLabelsReply) {}
+  rpc MakeChain (MakeChainRequest) returns (MakeChainReply) {}
+  rpc ResolveLabel (ResolveLabelRequest) returns (ResolveLabelReply) {}
+}
+
+message RegisterLanguageRequest {
+  string code = 1;
+  string name = 2;
+}
+message RegisterLanguageReply { int64 nref = 1; }
+
+message RegisterDialectRequest {
+  string code = 1;
+  string name = 2;
+  string base_code = 3;
+}
+message RegisterDialectReply { int64 nref = 1; }
+
+message LookupLanguageNrefRequest { string code = 1; }
+message LookupLanguageNrefReply { int64 nref = 1; }
+
+message SetLabelsRequest {
+  int64 nref = 1;
+  string code = 2;
+  repeated AVP labels = 3;
+}
+message SetLabelsReply {}
+
+message MakeChainRequest { repeated string codes = 1; }
+message MakeChainReply { Value chain = 1; }  // opaque -- round-trip only
+
+message ResolveLabelRequest {
+  int64 nref = 1;
+  int64 attr_nref = 2;
+  Value chain = 3;   // pass through unchanged from MakeChainReply.chain
+}
+message ResolveLabelReply { Value label = 1; }
