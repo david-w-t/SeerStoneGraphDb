@@ -1,0 +1,13 @@
+syntax = "proto3";
+package graphdb_api;
+
+service ProjectService {
+  rpc RegisterProject (RegisterProjectRequest) returns (RegisterProjectReply) {}
+  rpc IsProject (IsProjectRequest) returns (IsProjectReply) {}
+}
+
+message RegisterProjectRequest { string name = 1; }
+message RegisterProjectReply { int64 project_id = 1; }
+
+message IsProjectRequest { int64 nref = 1; }
+message IsProjectReply { bool is_project = 1; }
