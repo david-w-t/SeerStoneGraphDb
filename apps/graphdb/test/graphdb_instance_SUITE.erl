@@ -86,6 +86,9 @@
 	add_relationship_rejects_non_attribute_char/1,
 	add_relationship_rejects_non_attribute_reciprocal/1,
 	add_relationship_rejects_target_kind_mismatch/1,
+	add_relationship_rejects_characterization_without_target_kind/1,
+	add_relationship_rejects_structural_characterization/1,
+	add_relationship_rejects_structural_reciprocal/1,
 	add_relationship_rejects_source_has_no_class/1,
 	add_relationship_rejects_target_has_no_class/1,
 	add_relationship_stamps_user_avps/1,
@@ -263,6 +266,9 @@ groups() ->
 			add_relationship_rejects_non_attribute_char,
 			add_relationship_rejects_non_attribute_reciprocal,
 			add_relationship_rejects_target_kind_mismatch,
+			add_relationship_rejects_characterization_without_target_kind,
+			add_relationship_rejects_structural_characterization,
+			add_relationship_rejects_structural_reciprocal,
 			add_relationship_rejects_source_has_no_class,
 			add_relationship_rejects_target_has_no_class,
 			add_relationship_stamps_user_avps,
@@ -989,6 +995,62 @@ add_relationship_rejects_target_kind_mismatch(_Config) ->
 		graphdb_attr:create_relationship_attribute_pair("Has", "HeldBy", class),
 	?assertEqual({error, {target_kind_mismatch, class, instance}},
 		graphdb_instance:add_relationship(proj(), A, Char, B, Recip)).
+
+%%-----------------------------------------------------------------------------
+%% a characterization carrying no target_kind AVP is rejected: nothing
+%% says what it may point at.  create_relationship_type/1 makes exactly
+%% such a node -- a grouping bucket, not an arc label.
+%%-----------------------------------------------------------------------------
+add_relationship_rejects_characterization_without_target_kind(_Config) ->
+	{ok, ClassNref} = graphdb_class:create_class("Thing", 3),
+	{ok, A, _} = graphdb_instance:create_instance(proj(), "A", ClassNref, root()),
+	{ok, B, _} = graphdb_instance:create_instance(proj(), "B", ClassNref, root()),
+	{ok, Mentors}    = graphdb_attr:create_relationship_type("Mentors"),
+	{ok, MentoredBy} = graphdb_attr:create_relationship_type("MentoredBy"),
+	?assertEqual({error, {characterization_missing_target_kind, Mentors}},
+		graphdb_instance:add_relationship(proj(), A, Mentors, B, MentoredBy)),
+	?assertEqual([], conn_rows(proj(), A)).
+
+%%-----------------------------------------------------------------------------
+%% a structural bootstrap label (21-31) cannot label a connection arc.
+%% Before this guard, 28/27 wrote a kind=connection "Alice is Bob's
+%% Child" pair that children/2 (kind=composition) and the parents cache
+%% both deny.
+%%-----------------------------------------------------------------------------
+add_relationship_rejects_structural_characterization(_Config) ->
+	{ok, ClassNref} = graphdb_class:create_class("Thing", 3),
+	{ok, A, _} = graphdb_instance:create_instance(proj(), "A", ClassNref, root()),
+	{ok, B, _} = graphdb_instance:create_instance(proj(), "B", ClassNref, root()),
+	?assertEqual({error, {structural_arc_label, ?ARC_INST_CHILD}},
+		graphdb_instance:add_relationship(proj(), A, ?ARC_INST_CHILD, B,
+			?ARC_INST_PARENT)),
+	?assertEqual({error, {structural_arc_label, ?ARC_TEMPLATE}},
+		graphdb_instance:add_relationship(proj(), A, ?ARC_TEMPLATE, B,
+			?ARC_TEMPLATE)),
+	?assertEqual([], conn_rows(proj(), A)).
+
+%%-----------------------------------------------------------------------------
+%% the reverse row is labelled by the reciprocal, so a structural
+%% reciprocal is rejected too, even under a well-formed characterization.
+%%-----------------------------------------------------------------------------
+add_relationship_rejects_structural_reciprocal(_Config) ->
+	{ok, ClassNref} = graphdb_class:create_class("Thing", 3),
+	{ok, A, _} = graphdb_instance:create_instance(proj(), "A", ClassNref, root()),
+	{ok, B, _} = graphdb_instance:create_instance(proj(), "B", ClassNref, root()),
+	{ok, {Knows, _KnownBy}} =
+		graphdb_attr:create_relationship_attribute_pair("Knows", "KnownBy",
+			instance),
+	?assertEqual({error, {structural_arc_label, ?ARC_INST_PARENT}},
+		graphdb_instance:add_relationship(proj(), A, Knows, B,
+			?ARC_INST_PARENT)),
+	?assertEqual([], conn_rows(proj(), B)).
+
+%% conn_rows(Project, Nref) -> [#relationship{}]
+%% The kind=connection rows sourced at Nref in Project's own table.
+conn_rows(Project, Nref) ->
+	[R || R <- mnesia:dirty_index_read(graphdb_ns:rel_table(Project), Nref,
+			#relationship.source_nref),
+		  R#relationship.kind =:= connection].
 
 %%-----------------------------------------------------------------------------
 %% source that exists and passes endpoint validation but has no instance->class

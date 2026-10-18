@@ -105,6 +105,7 @@
 	%% Batch mutate
 	mutate_empty_batch/1,
 	mutate_single_add_relationship/1,
+	mutate_add_relationship_strict_label_check/1,
 	mutate_single_retire_and_unretire/1,
 	mutate_mixed_all_succeed/1,
 	mutate_atomic_rollback/1,
@@ -218,6 +219,7 @@ groups() ->
 		{mutate, [], [
 			mutate_empty_batch,
 			mutate_single_add_relationship,
+			mutate_add_relationship_strict_label_check,
 			mutate_single_retire_and_unretire,
 			mutate_mixed_all_succeed,
 			mutate_atomic_rollback,
@@ -319,6 +321,7 @@ init_per_testcase(TC, Config) when
 		TC =:= get_node_hides_retired;
 		TC =:= mutate_empty_batch;
 		TC =:= mutate_single_add_relationship;
+		TC =:= mutate_add_relationship_strict_label_check;
 		TC =:= mutate_single_retire_and_unretire;
 		TC =:= mutate_mixed_all_succeed;
 		TC =:= mutate_atomic_rollback;
@@ -1079,6 +1082,30 @@ mutate_single_add_relationship(_Config) ->
 			[{add_relationship, InstA, CharNref, InstB, RecipNref}])),
 	Targets = mutate_conn_targets(Project, InstA, CharNref),
 	?assertEqual([InstB], Targets).
+
+%%-----------------------------------------------------------------------------
+%% The batch path shares add_relationship_in_txn/10's label checks: a
+%% characterization without target_kind, or a structural label, rolls
+%% the whole batch back.
+%%-----------------------------------------------------------------------------
+mutate_add_relationship_strict_label_check(_Config) ->
+	Project = proj(),
+	{ok, ClassNref} = graphdb_class:create_class("MClassSL", 3),
+	{ok, InstA, _} = graphdb_instance:create_instance(Project, "MA", ClassNref, root()),
+	{ok, InstB, _} = graphdb_instance:create_instance(Project, "MB", ClassNref, root()),
+	{ok, {Knows, KnownBy}} =
+		graphdb_attr:create_relationship_attribute_pair("MSKnows", "MSKnownBy",
+			instance),
+	{ok, Bucket} = graphdb_attr:create_relationship_type("MSBucket"),
+	?assertEqual({error, {characterization_missing_target_kind, Bucket}},
+		graphdb_mgr:mutate(Project,
+			[{add_relationship, InstA, Knows, InstB, KnownBy},
+			 {add_relationship, InstA, Bucket, InstB, KnownBy}])),
+	?assertEqual({error, {structural_arc_label, ?ARC_INST_CHILD}},
+		graphdb_mgr:mutate(Project,
+			[{add_relationship, InstA, ?ARC_INST_CHILD, InstB,
+			  ?ARC_INST_PARENT}])),
+	?assertEqual([], mutate_conn_targets(Project, InstA, Knows)).
 
 %%-----------------------------------------------------------------------------
 %% A single retire_node sets the marker; a single unretire_node clears it.

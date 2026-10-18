@@ -572,9 +572,30 @@ an environment class reaches its project instances; the edge discloses
 outgoing rows of its own in that table. `#q_instances_of{}` shares the same
 read (`session_read_outgoing/4`) instead of its former special case.
 
-Still open: backfilling `target_kind` onto bootstrap arc labels 21–30, which
-would let `graphdb_instance:check_target_kind/3` drop its permissive legacy
-arm.
+**`target_kind` backfill — superseded by strict connection labels.** The
+backfill onto bootstrap arc labels 21–30 was dropped: most of those labels
+join nodes of more than one kind (22 also reaches project anchors, 23/25/27
+reach categories, 26 reaches default templates), so a single `target_kind`
+would be false, and structural labels were never valid connection
+characterizations anyway. Instead `graphdb_instance:check_target_kind/3`
+lost its permissive arm: `add_relationship` and `mutate/1,2` reject a
+characterization with no `target_kind`
+(`{characterization_missing_target_kind, C}`) and a structural label 21–31
+as characterization or reciprocal (`{structural_arc_label, N}`). Only
+`create_relationship_attribute_pair/3,4` makes a valid connection label.
+
+**Open follow-up — rule-fired connections bypass the strict label check.**
+The connection firing engine (`graphdb_instance:mandatory_rows/5` and the
+`auto` landing via `write_connection_arcs/7`) builds rows with
+`build_connection_rows` directly, not through
+`validate_arc_endpoints_in_txn/7`. And
+`graphdb_rules:create_connection_rule/8,9` checks only that its
+characterization and reciprocal have `attribute_type = relationship` — which
+a relationship-type bucket node and the bootstrap labels 21–31 both satisfy.
+So a rule built on such a label is accepted and fires unchecked connection
+rows. Fix at rule creation: apply the same two checks (present
+`target_kind`, not structural) in `validate_characterization/1` /
+`validate_reciprocal/1`.
 
 **Defect (Important, pre-existing, unrelated to SP2) —
 `rel_id_server` counter seeding — IMPLEMENTED (2026-08-09).** Filed as a

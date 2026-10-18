@@ -363,6 +363,18 @@ Arc-discovered traversal (`graphdb_query`'s bounded BFS) instead routes
 on `#relationship.kind`/`characterization` via
 `graphdb_ns:arc_target_namespace/3`, which needs no `target_kind` lookup.
 
+They are deliberately never backfilled: most of them join nodes of more
+than one kind (22 also reaches project anchors, 26 default templates, 23,
+25 and 27 categories), so a single `target_kind` would be false. Instead
+the explicit connection write path is strict: `add_relationship` (and
+`mutate/1,2`'s `add_relationship`) rejects a characterization with no `target_kind`
+(`{characterization_missing_target_kind, C}`) and rejects a structural
+bootstrap label 21–31 as characterization or reciprocal
+(`{structural_arc_label, N}`). Only
+`create_relationship_attribute_pair/3,4` makes a valid connection label.
+Rule-fired connections (`graphdb_instance`'s mandatory/auto landings) build
+their rows directly and are not yet covered; see `TASKS.md`.
+
 This routing table is the code contract of the pure module `graphdb_ns`
 (`namespace_of/2`, `target_namespace/2` — both `Home`-first — plus
 `node_table/1` / `rel_table/1`, which resolve a `Home` to its physical

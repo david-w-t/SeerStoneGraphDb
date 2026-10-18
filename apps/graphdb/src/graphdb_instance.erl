@@ -34,6 +34,14 @@
 %% Provides create_instance/4,5,6, add_relationship/5,6,7, get_instance/2,
 %% children/2, compositional_ancestors/2, resolve_value/3.
 %%---------------------------------------------------------------------
+%% Rev A.1 Date: 2026-09-24 Author: David W. Thomas
+%% Strict connection-arc labels: add_relationship (and mutate/1,2's
+%% add_relationship) rejects a characterization with no target_kind AVP
+%% ({characterization_missing_target_kind, C}) and a structural bootstrap
+%% label 21-31 as characterization or reciprocal
+%% ({structural_arc_label, N}).  Replaces the permissive "no target_kind
+%% -- skip the check" arm.
+%%---------------------------------------------------------------------
 -module(graphdb_instance).
 -behaviour(gen_server).
 
@@ -1787,7 +1795,8 @@ validate_arc_endpoints_in_txn(Home, SourceNref, CharNref, TargetNref,
 				none ->
 					case {CKind, RKind} of
 						{attribute, attribute} ->
-							case check_target_kind(CharNode, TKind, TkAttr) of
+							case check_arc_labels(CharNode, ReciprocalNref,
+									TKind, TkAttr) of
 								ok              -> ok;
 								{error, Reason} -> mnesia:abort(Reason)
 							end;
@@ -1811,12 +1820,39 @@ first_retired([{Nref, AVPs} | Rest], RetAttr) ->
 		false -> first_retired(Rest, RetAttr)
 	end.
 
-check_target_kind(#node{attribute_value_pairs = AVPs}, ActualKind, TkAttr) ->
+%% check_arc_labels(CharNode, ReciprocalNref, TargetKind, TkAttr)
+%%     -> ok | {error, Reason}
+%%
+%% A connection arc is labelled by its characterization (forward row) and
+%% its reciprocal (reverse row).  Neither may be a structural bootstrap
+%% label: 21-30 are the hierarchy and membership labels, written only by
+%% the hierarchy and membership paths as kind=composition / taxonomy /
+%% instantiation rows, and 31 is the Template scope AVP key, not an arc
+%% label.  Written here as kind=connection they assert a hierarchy the
+%% hierarchy reads (kind-filtered) and the parents cache both deny.
+check_arc_labels(#node{nref = CharNref} = CharNode, ReciprocalNref,
+		TargetKind, TkAttr) ->
+	case {is_structural_label(CharNref), is_structural_label(ReciprocalNref)} of
+		{true, _}      -> {error, {structural_arc_label, CharNref}};
+		{_, true}      -> {error, {structural_arc_label, ReciprocalNref}};
+		{false, false} -> check_target_kind(CharNode, TargetKind, TkAttr)
+	end.
+
+is_structural_label(Nref) ->
+	Nref >= ?ARC_CAT_PARENT andalso Nref =< ?ARC_TEMPLATE.
+
+%% check_target_kind(CharNode, ActualKind, TkAttr) -> ok | {error, Reason}
+%%
+%% Strict: a characterization with no target_kind AVP is rejected, since
+%% nothing then says what the arc may point at.  Only
+%% graphdb_attr:create_relationship_attribute_pair/3,4 makes a label
+%% carrying one; a relationship-type node (create_relationship_type/1,2)
+%% is a grouping bucket, not an arc label.
+check_target_kind(#node{nref = CharNref, attribute_value_pairs = AVPs},
+		ActualKind, TkAttr) ->
 	case find_avp_value(AVPs, TkAttr) of
 		not_found ->
-			%% No target_kind AVP on the arc-label -- legacy or relationship-
-			%% type bucket node; skip the kind check.
-			ok;
+			{error, {characterization_missing_target_kind, CharNref}};
 		{ok, ActualKind} ->
 			ok;
 		{ok, ExpectedKind} ->

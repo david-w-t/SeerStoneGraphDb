@@ -101,6 +101,8 @@ Both are addressed here as Half B.
   BFS and `#q_instances_of{}` — see `TASKS.md`.)*
 - **`target_kind` backfill** onto arc labels 21–30, which would let
   `graphdb_instance:check_target_kind/3` drop its permissive legacy arm.
+  *(Superseded: dropped in favour of strict connection labels — the labels
+  are multi-kind, so a single value would be false. See `TASKS.md`.)*
 - **`#q_get_arcs{}` / `#q_describe{}`** keep entry-point guessing, by design.
 
 ## What does not change
