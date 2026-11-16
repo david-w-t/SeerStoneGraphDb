@@ -26,6 +26,10 @@
 %% directory), convert the schema to disc so disc_copies tables can be
 %% created.  Fixes the fresh-directory application boot.
 %%---------------------------------------------------------------------
+%% Rev C Date: November 2026 Author: David W. Thomas
+%% load/0 times ensure_mnesia, create_tables, wait_for_tables and the
+%% first-boot load as startup-profile phases (graphdb_startup).
+%%---------------------------------------------------------------------
 -module(graphdb_bootstrap).
 
 
@@ -138,11 +142,13 @@
 %%-----------------------------------------------------------------------------
 load() ->
 	try
-		ok = ensure_mnesia(),
-		ok = create_tables(),
-		ok = wait_for_tables(),
+		%% Each step is a startup-profile phase (graphdb_startup); the
+		%% graphdb_mgr phase includes them all.
+		ok = graphdb_startup:timed(ensure_mnesia, fun ensure_mnesia/0),
+		ok = graphdb_startup:timed(create_tables, fun create_tables/0),
+		ok = graphdb_startup:timed(wait_for_tables, fun wait_for_tables/0),
 		case mnesia:table_info(nodes, size) of
-			0 -> do_load();
+			0 -> graphdb_startup:timed(bootstrap_load, fun do_load/0);
 			_ -> ok
 		end
 	catch

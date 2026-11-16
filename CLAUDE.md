@@ -314,12 +314,17 @@ work landed in PR #12.
   {app_port,       8080},
   {log_path,       "log"},
   {data_path,      "data"},
-  {bootstrap_file, "apps/graphdb/priv/bootstrap.terms"}
+  {bootstrap_file, "apps/graphdb/priv/bootstrap.terms"},
+  {startup_warn_ms, 2000}
 ]},
  {mnesia, [
   {dir, "data"}
 ]}].
 ```
+
+`startup_warn_ms`: `graphdb:start/2` logs a startup profile on every boot
+(`graphdb_startup`: each phase's time, the total, the environment table
+sizes); the line is a warning when the total exceeds this many milliseconds.
 
 Both relative and absolute paths are accepted for `log_path`, `data_path`, and `bootstrap_file`. Relative paths resolve from the OTP release root.
 

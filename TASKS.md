@@ -747,6 +747,31 @@ allocate-outside-transaction rationale carries an inline comment at each
 allocation site. Observability only — no behavioural change to the write
 paths.
 
+### Startup profile — IMPLEMENTED (2026-11-16)
+
+Every boot logs one line to `log/seerstone.log` with the time of each phase
+(Mnesia start, table creation and load, first-boot bootstrap load, each
+`graphdb_sup` child's `init/1`, runtime flip, seed cache load), the total,
+the environment `nodes` / `relationships` sizes and the VM uptime. It is a
+warning when the total exceeds `startup_warn_ms` (`seerstone_graph_db`
+config, default 2000). Module `graphdb_startup`; design
+`docs/designs/startup-profile-design.md`.
+
+### Startup scans that grow with the environment *(follow-up)*
+
+The profile's first large-environment run (300 000 extra attribute nodes,
+cold boot of 1.3 s) found most of the time in three full scans of every
+attribute node: `graphdb_attr:retro_stamp_attribute_types/0` (a
+`mnesia:match_object` on `kind = attribute` under read locks) runs in the
+`init/1` of `graphdb_attr`, `graphdb_language` and `graphdb_rules` (455,
+347 and 292 ms). On a warm boot it never writes anything. Also,
+`graphdb_seeds:load/0` uses `dirty_select` with a `'<'` guard on the key,
+which scans the whole `nodes` table instead of the permanent tier only (21
+ms there). Options: run the retro-stamp once per boot instead of three
+times, limit it to the permanent tier (only seeds lack the stamp; runtime
+creators stamp at creation), or skip it when the stamp is already present
+on a marker node. Measure with the startup profile before and after.
+
 ### Hot code upgrade — `code_change/3` *(deferred)*
 
 `code_change/3` is unimplemented in every gen_server (`nref_allocator`,

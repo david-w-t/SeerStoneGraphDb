@@ -29,7 +29,7 @@ Implementation is underway:
 | `graphdb_language`     | Fully implemented — multilingual overlay (language registration, dialect chains, per-language overlay tables, label resolution, translation hooks)                                                                                                                                                                                                                                                                                                                                  |
 | `graphdb_query`        | Implemented — query language (parse/execute, snapshot-semantics sessions, path finding)                                                                                                                                                                                                                                                                                                                                                                                             |
 
-**735 tests** (151 EUnit + 584 Common Test) — all passing. See
+**739 tests** (151 EUnit + 588 Common Test) — all passing. See
 `TASKS.md` for remaining work.
 
 **Not yet stable:** the seed ontology and the storage layout are still
@@ -254,6 +254,7 @@ Priority order — each step applies only to attributes not yet resolved by a hi
 | `graphdb_query_SUITE`     | CT    | 61    | Query language: parse/execute, snapshot-semantics sessions, `#cont_path{}` resume, path finding                                                                                                                                                                                                                                                                                                                                              |
 | `graphdb_rules_SUITE`     | CT    | 81    | Rule meta-ontology seeding (incl. `reciprocal_nref` literal), composition/connection rule create/retrieve (incl. reciprocal param), validation catalog (incl. `{Min,Max}` multiplicity range), `effective_rules_for_class/2` taxonomy walk, `effective_connection_rules/2`, composition firing engine, propose mode, connection firing, horizontal conflict resolution                                                                       |
 | `graphdb_seeds_SUITE`     | CT    | 13    | Seed cache load/lookup/erase, label index and `{label_not_seed, ...}` failure, non-nref arguments, real application boot on an empty directory and restart on a second one                                                                                                                                                                                                                                                                   |
+| `graphdb_startup_SUITE`   | CT    | 4     | Startup profile: one line per boot naming every phase in order, warning over `startup_warn_ms`, warm restart without the bootstrap load, `timed/2` outside a boot                                                                                                                                                                                                                                                                            |
 | `graphdb_nref_SUITE`      | CT    | 6     | Switchable node-nref allocation facade; permanent/runtime phase flip                                                                                                                                                                                                                                                                                                                                                                         |
 | `graphdb_nrefs_SUITE`     | CT    | 2     | `graphdb_nrefs:verify/0` bootstrap nref-macro consistency check                                                                                                                                                                                                                                                                                                                                                                              |
 | `graphdb_project_SUITE`   | CT    | 13    | Project registry and physical store: register/open/require, per-project tables, project-local nref and rel-id allocators                                                                                                                                                                                                                                                                                                                     |
@@ -286,7 +287,8 @@ configures both the OTP logger and the application settings:
     {app_port,       8080},
     {log_path,       "log"},
     {data_path,      "data"},
-    {bootstrap_file, "apps/graphdb/priv/bootstrap.terms"}
+    {bootstrap_file, "apps/graphdb/priv/bootstrap.terms"},
+    {startup_warn_ms, 2000}
   ]},
   {mnesia, [
     {dir, "data"}
@@ -306,6 +308,22 @@ not created automatically. Create it once with `mkdir log`.
 
 Logs are written to `log/seerstone.log` (rotating, 5 × 10 MB segments).
 Errors are also echoed to stdout.
+
+### Startup profile
+
+Every boot writes one line to the log with the time each startup phase
+took, the total, the size of the environment `nodes` and `relationships`
+tables, and how long the VM had been up:
+
+```text
+graphdb startup: 1291.6 ms total (nodes 300068, relationships 136, VM up 1650 ms); phases (ms): graphdb_nref 0.0, rel_id_server 8.0, ensure_mnesia 0.0, create_tables 0.1, wait_for_tables 111.1, graphdb_mgr 125.0, graphdb_attr 455.2, ...
+```
+
+The line is a **warning** instead of info when the total exceeds
+`startup_warn_ms` in the `seerstone_graph_db` config (default 2000 ms).
+`ensure_mnesia`, `create_tables`, `wait_for_tables` and (first boot only)
+`bootstrap_load` run inside `graphdb_mgr`'s start, so its time includes
+theirs. To follow the trend: `grep "graphdb startup" log/seerstone.log*`.
 
 ### Changing the log level at runtime
 

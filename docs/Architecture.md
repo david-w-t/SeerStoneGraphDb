@@ -487,6 +487,15 @@ tier; after all child `init/1`s complete it calls
 `graphdb_nref:set_runtime_phase/0`, which also raises the `nref_server`
 floor to `?NREF_START`, then `graphdb_seeds:load/0`.
 
+The boot is profiled by `graphdb_startup`, a plain module: `graphdb_sup`
+starts each child through `graphdb_startup:start_child/1`, and the
+bootstrap steps, the runtime flip and the seed cache load are wrapped in
+`timed/2`. The durations go to a public ETS table that exists only while
+`graphdb:start/2` runs. It ends with one log line: every phase, the total,
+the environment table sizes. The line is a warning when the total exceeds
+`startup_warn_ms`. Outside a profiled boot (a worker restart, a test that
+starts workers by hand) the wrappers only run their work.
+
 ### Seed cache (`graphdb_seeds`)
 
 `graphdb_seeds` is a plain module (not a process) that holds every
@@ -557,7 +566,8 @@ Single authoritative config: `apps/seerstone/priv/default.config`.
    {app_port,       8080},
    {log_path,       "log"},
    {data_path,      "data"},
-   {bootstrap_file, "apps/graphdb/priv/bootstrap.terms"}
+   {bootstrap_file, "apps/graphdb/priv/bootstrap.terms"},
+   {startup_warn_ms, 2000}
  ]},
  {mnesia, [{dir, "data"}]}].
 ```
