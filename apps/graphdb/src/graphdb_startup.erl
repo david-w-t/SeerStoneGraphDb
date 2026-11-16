@@ -13,7 +13,7 @@
 %%				line with every phase, the total and the environment
 %%				table sizes.  The line is a warning when the total
 %%				exceeds the startup_warn_ms setting of the
-%%				seerstone_graph_db application (default 2000 ms),
+%%				graphdb application (default 2000 ms),
 %%				otherwise info.  Outside a profiled boot (a worker
 %%				restart, a test that starts workers directly) timed/2
 %%				and start_child/1 only run their work.
@@ -172,7 +172,7 @@ format_phases(Phases) ->
 		[io_lib:format("~p ~.1f", [Phase, Ms]) || {Phase, Ms} <- Phases]).
 
 warn_ms() ->
-	case application:get_env(seerstone_graph_db, startup_warn_ms) of
+	case application:get_env(graphdb, startup_warn_ms) of
 		{ok, Ms} when is_integer(Ms), Ms >= 0 -> Ms;
 		_                                     -> ?DEFAULT_WARN_MS
 	end.

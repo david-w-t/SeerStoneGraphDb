@@ -71,7 +71,7 @@ steps inside `graphdb_mgr` (`ensure_mnesia`, `create_tables`,
 `wait_for_tables`, first-boot `bootstrap_load`), the runtime flip and the
 seed cache load. `finish/0` logs one line with every phase, the total and
 the `nodes` / `relationships` sizes. It is a warning when the total exceeds
-`seerstone_graph_db`'s `startup_warn_ms` (default 2000), otherwise info.
+the `graphdb` application's `startup_warn_ms` (default 2000), otherwise info.
 The figures ride along as `startup_profile` logger metadata.
 
 ## Supervisor (`graphdb_sup`)
@@ -299,7 +299,8 @@ Instance-to-class membership arcs are written in the **project** database, not t
 Loaded by `graphdb_mgr:init/1` when the Mnesia `nodes` table is empty (first startup).
 
 - Creates the Mnesia schema and tables (`nodes`, `relationships`)
-- Reads `bootstrap_file` path from `application:get_env(seerstone_graph_db, bootstrap_file)`
+- Reads the bootstrap file path from `application:get_env(graphdb, bootstrap_file)`, defaulting to graphdb's own `priv/bootstrap.terms`
+- On a boot from existing data (`nodes` not empty) it loads nothing and runs `check_existing/0` instead: `graphdb_nrefs:verify/0`, then every node the file would write (same kind, every file AVP still present — workers may add AVPs) and every arc pair. A mismatch logs what to move aside and fails with `{stale_data_directory, Dir, Differences}`; seeds are in flux and old data is not migrated
 - Calls `file:consult/1` on the bootstrap file; validates all terms
 - Builds a symbol table for atom-labeled nrefs using a **local counter** starting at
   `?LABEL_START` (10001); does **not** call `nref_server:set_floor` — the runtime floor

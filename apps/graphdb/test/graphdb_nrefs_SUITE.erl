@@ -70,7 +70,7 @@ init_per_testcase(_TC, Config) ->
 	ok = file:set_cwd(TmpDir),
 	application:set_env(mnesia, dir, MnesiaDir),
 	BootstrapFile = proplists:get_value(bootstrap_file, Config),
-	application:set_env(seerstone_graph_db, bootstrap_file, BootstrapFile),
+	application:set_env(graphdb, bootstrap_file, BootstrapFile),
 	{ok, _} = application:ensure_all_started(nref),
 	{ok, _} = rel_id_server:start_link(),
 	{ok, _} = graphdb_mgr:start_link(),
@@ -93,7 +93,7 @@ end_per_testcase(TC, Config) ->
 	ok = file:set_cwd(OrigCwd),
 	TmpDir = proplists:get_value(tmp_dir, Config),
 	delete_dir_recursive(TmpDir),
-	application:unset_env(seerstone_graph_db, bootstrap_file),
+	application:unset_env(graphdb, bootstrap_file),
 	application:unset_env(mnesia, dir),
 	Verdict.
 

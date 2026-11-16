@@ -80,11 +80,11 @@ init_per_testcase(_TC, Config) ->
 	%% nref and rel_id_server keep their DETS files in the cwd.
 	ok = file:set_cwd(TmpDir),
 	application:set_env(mnesia, dir, MnesiaDir),
-	application:set_env(seerstone_graph_db, bootstrap_file,
+	application:set_env(graphdb, bootstrap_file,
 		proplists:get_value(bootstrap_file, Config)),
 	%% A boot under CT load may approach the 2000 ms default; cases that
 	%% expect info set a threshold no boot here reaches.
-	application:set_env(seerstone_graph_db, startup_warn_ms, 60000),
+	application:set_env(graphdb, startup_warn_ms, 60000),
 	#{level := PrimaryLevel} = logger:get_primary_config(),
 	ok = logger:set_primary_config(level, info),
 	ok = logger:add_handler(?HANDLER, ?MODULE,
@@ -110,8 +110,8 @@ end_per_testcase(_TC, Config) ->
 	catch dets:close(rel_id_server),
 	ok = file:set_cwd(proplists:get_value(orig_cwd, Config)),
 	delete_dir_recursive(proplists:get_value(tmp_dir, Config)),
-	application:unset_env(seerstone_graph_db, bootstrap_file),
-	application:unset_env(seerstone_graph_db, startup_warn_ms),
+	application:unset_env(graphdb, bootstrap_file),
+	application:unset_env(graphdb, startup_warn_ms),
 	application:unset_env(mnesia, dir),
 	ok.
 
@@ -151,13 +151,14 @@ boot_logs_one_profile_line(_Config) ->
 
 %% A boot longer than startup_warn_ms logs the same line as a warning.
 slow_boot_logs_a_warning(_Config) ->
-	application:set_env(seerstone_graph_db, startup_warn_ms, 0),
+	application:set_env(graphdb, startup_warn_ms, 0),
 	{ok, _} = application:ensure_all_started(graphdb),
 	{warning, #{warn_ms := 0, total_ms := Total}} = next_profile(),
 	?assert(Total > 0).
 
-%% A second boot on the same data skips the bootstrap load, and the
-%% profile opened by the first boot does not leak into the second.
+%% A second boot on the same data skips the bootstrap load and runs the
+%% stale-data check instead; the profile opened by the first boot does not
+%% leak into the second.
 warm_restart_profiles_without_bootstrap_load(_Config) ->
 	{ok, _} = application:ensure_all_started(graphdb),
 	{info, #{nodes := Nodes}} = next_profile(),
@@ -168,6 +169,8 @@ warm_restart_profiles_without_bootstrap_load(_Config) ->
 	Names = [P || {P, _} <- Phases],
 	?assertNot(lists:member(bootstrap_load, Names)),
 	?assert(lists:member(wait_for_tables, Names)),
+	%% The warm boot checks the stored data against the bootstrap file.
+	?assert(lists:member(stale_data_check, Names)),
 	?assertEqual(1, length([P || P <- Names, P =:= graphdb_mgr])).
 
 %% With no profile open (a worker restart, a test starting workers

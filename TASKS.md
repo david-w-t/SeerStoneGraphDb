@@ -753,9 +753,34 @@ Every boot logs one line to `log/seerstone.log` with the time of each phase
 (Mnesia start, table creation and load, first-boot bootstrap load, each
 `graphdb_sup` child's `init/1`, runtime flip, seed cache load), the total,
 the environment `nodes` / `relationships` sizes and the VM uptime. It is a
-warning when the total exceeds `startup_warn_ms` (`seerstone_graph_db`
-config, default 2000). Module `graphdb_startup`; design
+warning when the total exceeds `startup_warn_ms` (`graphdb` config,
+default 2000). Module `graphdb_startup`; design
 `docs/designs/startup-profile-design.md`.
+
+### Stale data directory check — IMPLEMENTED (2026-11-16)
+
+A `data/` bootstrapped from an older `bootstrap.terms` used to boot into its
+old seeds and fail in whichever worker `init/1` first missed one (seen as
+`{literal_not_found, "lang_code"}` from `graphdb_language`). On a boot from
+existing data, `graphdb_bootstrap` now checks the data against the file
+(`graphdb_nrefs:verify/0`, every node with its file AVPs, every arc pair)
+and stops with `{stale_data_directory, Dir, Differences}` after logging what
+to move aside. It reads only the file's rows (under 30 ms). Not detected: a
+node or arc the file no longer has, and worker `init/1` seeds (those are
+find-or-create, so a newer worker adds them on the next boot).
+
+### Release boot — IMPLEMENTED (2026-11-16)
+
+`make release` built, but the release stopped at boot with
+`{bootstrap_failed, {missing_config, bootstrap_file}}`. No application is
+named `seerstone_graph_db`, so a release never exposes that `sys.config`
+stanza; only `rebar3 shell` sets it by hand. The configured path
+`apps/graphdb/priv/bootstrap.terms` would not have existed in a release
+either. graphdb's settings (`startup_warn_ms`, optional `bootstrap_file`)
+now live in the `graphdb` application env, and `bootstrap_file` defaults
+to graphdb's own `priv/bootstrap.terms`. Remaining: dictionary still reads
+`data_path` from `seerstone_graph_db` (a release silently uses its default,
+`"data"`), and `app_port` / `log_path` are not read by anything.
 
 ### Startup scans that grow with the environment *(follow-up)*
 

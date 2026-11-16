@@ -302,7 +302,7 @@ init_per_testcase(init_fails_on_bad_config, Config) ->
 	Config1 = setup_isolated_env(Config),
 	BadPath = filename:join(proplists:get_value(tmp_dir, Config1),
 		"does_not_exist.terms"),
-	application:set_env(seerstone_graph_db, bootstrap_file, BadPath),
+	application:set_env(graphdb, bootstrap_file, BadPath),
 	graphdb_nref:set_permanent_phase(),
 	{ok, _} = graphdb_nref:start_link(),
 	Config1;
@@ -363,7 +363,7 @@ init_per_testcase(TC, Config) when
 		TC =:= mutate_1_still_rejects_permanent_tier ->
 	Config1 = setup_isolated_env(Config),
 	BootstrapFile = proplists:get_value(bootstrap_file, Config),
-	application:set_env(seerstone_graph_db, bootstrap_file, BootstrapFile),
+	application:set_env(graphdb, bootstrap_file, BootstrapFile),
 	%% Start rel_id_server first (needed for relationship ID allocation)
 	{ok, _} = rel_id_server:start_link(),
 	graphdb_nref:set_permanent_phase(),
@@ -381,7 +381,7 @@ init_per_testcase(TC, Config) when
 init_per_testcase(_TC, Config) ->
 	Config1 = setup_isolated_env(Config),
 	BootstrapFile = proplists:get_value(bootstrap_file, Config),
-	application:set_env(seerstone_graph_db, bootstrap_file, BootstrapFile),
+	application:set_env(graphdb, bootstrap_file, BootstrapFile),
 	%% Start rel_id_server first (needed for relationship ID allocation)
 	{ok, _} = rel_id_server:start_link(),
 	graphdb_nref:set_permanent_phase(),
@@ -453,7 +453,7 @@ end_per_testcase(TC, Config) ->
 	delete_dir_recursive(TmpDir),
 
 	%% Unset app env to avoid leaking between test cases
-	application:unset_env(seerstone_graph_db, bootstrap_file),
+	application:unset_env(graphdb, bootstrap_file),
 	application:unset_env(mnesia, dir),
 
 	Verdict.

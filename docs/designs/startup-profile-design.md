@@ -33,16 +33,18 @@ David chose the first, with the threshold in config at 2000 ms.
 
 ## Design
 
-- **Configuration:** `startup_warn_ms` in the `seerstone_graph_db`
-  application environment, default 2000. It is in `config/sys.config` and
-  `apps/seerstone/priv/default.config`. A missing or invalid value means
-  2000.
+- **Configuration:** `startup_warn_ms` in the `graphdb` application
+  environment, default 2000 (in `graphdb.app.src`, `config/sys.config` and
+  `apps/seerstone/priv/default.config`). A missing or invalid value means
+  2000. It first went in the `seerstone_graph_db` stanza, which a release
+  never exposes, and was moved the same day.
 - **Phases**, in the order they finish:
   - Each `graphdb_sup` child's `init/1`. The children start through
     `graphdb_startup:start_child/1`.
   - Inside `graphdb_mgr`: `ensure_mnesia`, `create_tables`,
-    `wait_for_tables` and, on the first boot only, `bootstrap_load`. These
-    finish just before `graphdb_mgr`, and its time includes them.
+    `wait_for_tables`, then `bootstrap_load` on the first boot or
+    `stale_data_check` on a boot from existing data. These finish just
+    before `graphdb_mgr`, and its time includes them.
   - `runtime_flip` and `seed_cache`.
 - **Line:**
   - Layout: `graphdb startup: <total> ms total (nodes N, relationships R,

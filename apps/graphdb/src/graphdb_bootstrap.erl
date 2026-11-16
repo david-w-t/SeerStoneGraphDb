@@ -30,6 +30,15 @@
 %% load/0 times ensure_mnesia, create_tables, wait_for_tables and the
 %% first-boot load as startup-profile phases (graphdb_startup).
 %%---------------------------------------------------------------------
+%% Rev D Date: November 2026 Author: David W. Thomas
+%% On a boot from existing data, load/0 checks the data against the
+%% bootstrap file (check_existing/0) and fails with
+%% {stale_data_directory, Dir, Problems} when it was bootstrapped from an
+%% older seed layout, instead of letting a worker init fail obscurely.
+%% The bootstrap file is the graphdb application's bootstrap_file setting,
+%% defaulting to graphdb's priv/bootstrap.terms (the old
+%% seerstone_graph_db setting was invisible in a release).
+%%---------------------------------------------------------------------
 -module(graphdb_bootstrap).
 
 
@@ -137,8 +146,11 @@
 %% bootstrap scaffold from the bootstrap.terms file.  Called by
 %% graphdb_mgr:init/1 on first startup.
 %%
-%% Idempotent: returns ok immediately if the nodes table is already
-%% populated.
+%% Idempotent: when the nodes table is already populated it loads
+%% nothing.  It then checks that the stored data still matches the
+%% bootstrap file (check_existing/0) and fails with
+%% {stale_data_directory, Dir, Problems} when it does not: seeds and
+%% persistence are in flux and old data is not migrated.
 %%-----------------------------------------------------------------------------
 load() ->
 	try
@@ -149,7 +161,8 @@ load() ->
 		ok = graphdb_startup:timed(wait_for_tables, fun wait_for_tables/0),
 		case mnesia:table_info(nodes, size) of
 			0 -> graphdb_startup:timed(bootstrap_load, fun do_load/0);
-			_ -> ok
+			_ -> graphdb_startup:timed(stale_data_check,
+					fun check_existing/0)
 		end
 	catch
 		throw:{error, _} = Err -> Err;
@@ -261,34 +274,123 @@ wait_for_tables() ->
 %% Reads the bootstrap file, validates, and writes all terms to Mnesia.
 %%-----------------------------------------------------------------------------
 do_load() ->
-	File = get_bootstrap_file(),
+	#{file := File, nodes := ResNodes, rels := ResRels, labels := NLabels} =
+		prepare(),
 	logger:info("graphdb_bootstrap: loading ~s", [File]),
+	logger:info("graphdb_bootstrap: allocated ~p label nrefs from ~p",
+		[NLabels, ?LABEL_START]),
+	ok = write_nodes(ResNodes),
+	ok = write_relationships(ResRels),
+	ok = rebuild_and_verify_caches(),
+	ok = case graphdb_nrefs:verify() of
+		ok -> ok;
+		{error, _} = E -> throw(E)
+	end,
+	logger:info("graphdb_bootstrap: loaded ~p nodes, ~p relationship pairs",
+		[length(ResNodes), length(ResRels)]),
+	ok.
+
+
+%%-----------------------------------------------------------------------------
+%% prepare() -> #{file, nodes, rels, labels}
+%%
+%% Reads and validates the bootstrap file and resolves its atom labels,
+%% writing nothing.  Labels get nrefs from a local counter in the
+%% permanent tier [?LABEL_START, ?NREF_START) in file order, so the same
+%% file always resolves to the same nrefs.  The runtime floor is set
+%% later by graphdb:start/2's phase flip, not here.
+%%-----------------------------------------------------------------------------
+prepare() ->
+	File = get_bootstrap_file(),
 	case file:consult(File) of
 		{ok, Terms} ->
 			{Nodes, Rels} = classify_terms(Terms),
 			ok = validate(?NREF_START, Nodes),
 			ok = validate_relationships(Rels),
-			%% Allocate atom-label nrefs from a local counter in the
-			%% permanent tier [?LABEL_START, ?NREF_START).  The runtime
-			%% floor is set later by graphdb:start/2's phase flip, not here.
 			SymTable = build_symbol_table(Nodes, Rels, ?LABEL_START, ?NREF_START),
-			logger:info("graphdb_bootstrap: allocated ~p label nrefs from ~p",
-				[maps:size(SymTable), ?LABEL_START]),
 			{ResNodes, ResRels} = apply_symbol_table(Nodes, Rels, SymTable),
 			ok = validate_no_unresolved_labels(ResNodes, ResRels),
-			ok = write_nodes(ResNodes),
-			ok = write_relationships(ResRels),
-			ok = rebuild_and_verify_caches(),
-			ok = case graphdb_nrefs:verify() of
-				ok -> ok;
-				{error, _} = E -> throw(E)
-			end,
-			logger:info("graphdb_bootstrap: loaded ~p nodes, ~p relationship pairs",
-				[length(ResNodes), length(ResRels)]),
-			ok;
+			#{file => File, nodes => ResNodes, rels => ResRels,
+			  labels => maps:size(SymTable)};
 		{error, Reason} ->
 			throw({error, {consult_failed, File, Reason}})
 	end.
+
+
+%%-----------------------------------------------------------------------------
+%% check_existing() -> ok
+%%
+%% On a boot from existing data, confirms the data was bootstrapped from
+%% the current bootstrap file: the scaffold nrefs check
+%% (graphdb_nrefs:verify/0), every node the file would write (same kind,
+%% and every AVP the file gives it; workers may add AVPs but never remove
+%% them) and every arc pair it would write.  Throws
+%% {error, {stale_data_directory, Dir, Problems}} otherwise, after logging
+%% what to do.  Reads only the bootstrap file's rows, so its cost does not
+%% grow with the environment.
+%%-----------------------------------------------------------------------------
+check_existing() ->
+	#{file := File, nodes := Nodes, rels := Rels} = prepare(),
+	Scaffold = case graphdb_nrefs:verify() of
+		ok                                         -> [];
+		{error, {scaffold_nref_mismatch, Mismatches}} ->
+			[{scaffold_nref_mismatch, Mismatches}]
+	end,
+	Problems = Scaffold
+		++ lists:flatmap(fun node_problems/1, Nodes)
+		++ lists:flatmap(fun rel_problems/1, Rels),
+	case Problems of
+		[] ->
+			ok;
+		_ ->
+			Dir = mnesia:system_info(directory),
+			logger:error("graphdb_bootstrap: the data directory ~ts does not "
+				"match ~ts (~p differences): it was bootstrapped from an older "
+				"seed layout.  Seeds and persistence are still changing and old "
+				"data is not migrated.  Stop the system, move the data directory "
+				"and the nref_allocator, nref_server and rel_id_server .dets "
+				"files aside, and start again.  First differences: ~p",
+				[Dir, File, length(Problems), lists:sublist(Problems, 10)]),
+			throw({error, {stale_data_directory, Dir, Problems}})
+	end.
+
+node_problems(NodeTerm) ->
+	#node{nref = Nref, kind = Kind, attribute_value_pairs = Expected} =
+		term_to_node(NodeTerm),
+	case mnesia:dirty_read(nodes, Nref) of
+		[] ->
+			[{missing_node, Nref}];
+		[#node{kind = Actual}] when Actual =/= Kind ->
+			[{kind_changed, Nref, Kind, Actual}];
+		[#node{attribute_value_pairs = AVPs}] ->
+			case missing(Expected, AVPs) of
+				[]      -> [];
+				Missing -> [{avps_missing, Nref, Missing}]
+			end
+	end.
+
+rel_problems(RelTerm) ->
+	{Row1, Row2} = expand_relationship(RelTerm, {undefined, undefined}),
+	[{missing_relationship, S, C, T} ||
+		#relationship{source_nref = S, characterization = C,
+			target_nref = T} = Row <- [Row1, Row2],
+		not row_present(Row)].
+
+%% A stored row matches when every field the file sets is the same (its
+%% id is allocated at load time and is ignored) and it still carries the
+%% file's AVPs.
+row_present(#relationship{kind = K, source_nref = S, characterization = C,
+		target_nref = T, reciprocal = R, avps = AVPs}) ->
+	lists:any(
+		fun(#relationship{kind = K1, characterization = C1, target_nref = T1,
+				reciprocal = R1, avps = AVPs1}) ->
+			K1 =:= K andalso C1 =:= C andalso T1 =:= T andalso R1 =:= R
+				andalso missing(AVPs, AVPs1) =:= []
+		end,
+		mnesia:dirty_index_read(relationships, S, #relationship.source_nref)).
+
+missing(Expected, Actual) ->
+	[X || X <- Expected, not lists:member(X, Actual)].
 
 
 %%-----------------------------------------------------------------------------
@@ -316,11 +418,22 @@ rebuild_and_verify_caches() ->
 
 %%-----------------------------------------------------------------------------
 %% get_bootstrap_file() -> string()
+%%
+%% The graphdb application's bootstrap_file setting when present,
+%% otherwise graphdb's own priv/bootstrap.terms (works from the source
+%% tree, rebar3 shell and a release alike).
 %%-----------------------------------------------------------------------------
 get_bootstrap_file() ->
-	case application:get_env(seerstone_graph_db, bootstrap_file) of
-		{ok, File} -> File;
-		undefined  -> throw({error, {missing_config, bootstrap_file}})
+	case application:get_env(graphdb, bootstrap_file) of
+		{ok, File} ->
+			File;
+		undefined ->
+			case code:priv_dir(graphdb) of
+				{error, bad_name} ->
+					throw({error, {missing_config, bootstrap_file}});
+				Priv ->
+					filename:join(Priv, "bootstrap.terms")
+			end
 	end.
 
 
@@ -573,7 +686,8 @@ term_to_node({node, Nref, Kind, {NameAttrNref, NameValue}, ExtraAVPs}) ->
 %%-----------------------------------------------------------------------------
 write_relationships(Rels) ->
 	lists:foreach(fun(RelTerm) ->
-		{Row1, Row2} = expand_relationship(RelTerm),
+		{Row1, Row2} = expand_relationship(RelTerm,
+			rel_id_server:get_id_pair()),
 		{ok, ok} = graphdb_mgr:transaction(fun() ->
 			ok = mnesia:write(relationships, Row1, write),
 			ok = mnesia:write(relationships, Row2, write)
@@ -583,17 +697,18 @@ write_relationships(Rels) ->
 
 
 %%-----------------------------------------------------------------------------
-%% expand_relationship(Term) -> {#relationship{}, #relationship{}}
+%% expand_relationship(Term, {Id1, Id2}) -> {#relationship{}, #relationship{}}
 %%
-%% Allocates two nref IDs and expands a bidirectional relationship
-%% term into two directed rows.  Both rows share the same Kind.
+%% Expands a bidirectional relationship term into two directed rows with
+%% the given row ids (the writer allocates them from rel_id_server; the
+%% stale-data check passes placeholders).  Both rows share the same Kind.
 %%
 %% {relationship, N1, R1, AVPs1, R2, N2, AVPs2, Kind} expands to:
 %%   Row 1: source=N1, characterization=R1, target=N2, reciprocal=R2, kind=Kind
 %%   Row 2: source=N2, characterization=R2, target=N1, reciprocal=R1, kind=Kind
 %%-----------------------------------------------------------------------------
-expand_relationship({relationship, N1, R1, AVPs1, R2, N2, AVPs2, Kind}) ->
-	{Id1, Id2} = rel_id_server:get_id_pair(),
+expand_relationship({relationship, N1, R1, AVPs1, R2, N2, AVPs2, Kind},
+		{Id1, Id2}) ->
 	Row1 = #relationship{
 		id = Id1,
 		kind = Kind,

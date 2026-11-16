@@ -29,13 +29,16 @@ Implementation is underway:
 | `graphdb_language`     | Fully implemented — multilingual overlay (language registration, dialect chains, per-language overlay tables, label resolution, translation hooks)                                                                                                                                                                                                                                                                                                                                  |
 | `graphdb_query`        | Implemented — query language (parse/execute, snapshot-semantics sessions, path finding)                                                                                                                                                                                                                                                                                                                                                                                             |
 
-**739 tests** (151 EUnit + 588 Common Test) — all passing. See
+**744 tests** (151 EUnit + 593 Common Test) — all passing. See
 `TASKS.md` for remaining work.
 
 **Not yet stable:** the seed ontology and the storage layout are still
 changing, and new versions are not compatible with data written by older
-ones. After updating, start from an empty data directory. This note will be
-removed once both are settled and compatibility can be supported.
+ones. After updating, start from an empty data directory. A boot on a data
+directory bootstrapped from an older `bootstrap.terms` stops with
+`{stale_data_directory, Dir, Differences}` and logs what to move aside. This
+note will be removed once both are settled and compatibility can be
+supported.
 
 ---
 
@@ -245,7 +248,7 @@ Priority order — each step applies only to attributes not yet resolved by a hi
 | `graphdb_language_tests`  | EUnit | 9     | Dialect-chain building, label-resolution helpers                                                                                                                                                                                                                                                                                                                                                                                             |
 | `graphdb_mgr_tests`       | EUnit | 30    | Direction validation, client-side arg checks                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `graphdb_ns_tests`        | EUnit | 16    | Pure namespace map: `namespace_of/2`, `target_namespace/2`, `node_table/1`, `rel_table/1`, `arc_target_namespace/3`                                                                                                                                                                                                                                                                                                                          |
-| `graphdb_bootstrap_SUITE` | CT    | 19    | Full bootstrap load, Mnesia tables, idempotency, error handling, Language subcategory nodes                                                                                                                                                                                                                                                                                                                                                  |
+| `graphdb_bootstrap_SUITE` | CT    | 24    | Full bootstrap load, Mnesia tables, idempotency, error handling, Language subcategory nodes, default bootstrap file, stale-data check on a reload                                                                                                                                                                                                                                                                                            |
 | `graphdb_mgr_SUITE`       | CT    | 77    | Bootstrap init, read ops, category guard, write stubs, cache audit/repair, soft-retire (`retire_node/1`, `unretire_node/1`), `get_node` retired-filter                                                                                                                                                                                                                                                                                       |
 | `graphdb_attr_SUITE`      | CT    | 41    | Attribute create/lookup, seeding, relationship types, atomic reciprocal pair, literal sub-groups, `attribute_type`/`instantiable`/`retired` markers                                                                                                                                                                                                                                                                                          |
 | `graphdb_class_SUITE`     | CT    | 79    | Class create, QC (qualifying characteristics), lookups, hierarchy, multi-inheritance, inheritance, templates, abstract classes                                                                                                                                                                                                                                                                                                               |
@@ -286,9 +289,11 @@ configures both the OTP logger and the application settings:
   {seerstone_graph_db, [
     {app_port,       8080},
     {log_path,       "log"},
-    {data_path,      "data"},
-    {bootstrap_file, "apps/graphdb/priv/bootstrap.terms"},
+    {data_path,      "data"}
+  ]},
+  {graphdb, [
     {startup_warn_ms, 2000}
+    %% Optional: {bootstrap_file, Path}; default graphdb's priv/bootstrap.terms
   ]},
   {mnesia, [
     {dir, "data"}
@@ -296,11 +301,16 @@ configures both the OTP logger and the application settings:
 ].
 ```
 
-`apps/seerstone/priv/default.config` carries the `seerstone_graph_db` and
-`mnesia` stanzas and is used as a fallback when no `sys.config` is present.
+graphdb's settings live in the `graphdb` stanza, which every launch mode
+reads: `make shell`, a release, and `erl -config`. No application is named
+`seerstone_graph_db`, so that stanza is visible only under `rebar3 shell`
+(which sets every stanza by hand); a release ignores it, and only
+`data_path` is read (dictionary, default `"data"`).
+`apps/seerstone/priv/default.config` mirrors these stanzas; no code reads it.
 
-**Note:** the `log/` directory must exist before starting the system; it is
-not created automatically. Create it once with `mkdir log`.
+A release runs from its own root directory (`_build/prod/rel/seerstone`),
+so `data/`, the nref `.dets` files and `log/` are created there. The logger
+creates `log/` when it is missing.
 
 ---
 
@@ -320,7 +330,7 @@ graphdb startup: 1291.6 ms total (nodes 300068, relationships 136, VM up 1650 ms
 ```
 
 The line is a **warning** instead of info when the total exceeds
-`startup_warn_ms` in the `seerstone_graph_db` config (default 2000 ms).
+`startup_warn_ms` in the `graphdb` config (default 2000 ms).
 `ensure_mnesia`, `create_tables`, `wait_for_tables` and (first boot only)
 `bootstrap_load` run inside `graphdb_mgr`'s start, so its time includes
 theirs. To follow the trend: `grep "graphdb startup" log/seerstone.log*`.

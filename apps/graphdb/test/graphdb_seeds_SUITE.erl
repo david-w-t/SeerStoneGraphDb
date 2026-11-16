@@ -98,14 +98,14 @@ init_per_testcase(app_start_loads_seed_cache, Config) ->
 	%% No schema is created here: the application boots on an empty
 	%% directory, as in production.
 	Config1 = setup_isolated_env(Config),
-	application:set_env(seerstone_graph_db, bootstrap_file,
+	application:set_env(graphdb, bootstrap_file,
 		proplists:get_value(bootstrap_file, Config1)),
 	Config1;
 init_per_testcase(app_restart_on_fresh_dir_reloads_seed_cache, Config) ->
 	%% Two empty directories: the first boot uses tmp_dir, the restart
 	%% uses second_dir (inside tmp_dir, so teardown removes both).
 	Config1 = setup_isolated_env(Config),
-	application:set_env(seerstone_graph_db, bootstrap_file,
+	application:set_env(graphdb, bootstrap_file,
 		proplists:get_value(bootstrap_file, Config1)),
 	SecondDir = filename:join(proplists:get_value(tmp_dir, Config1),
 		"second"),
@@ -119,7 +119,7 @@ init_per_testcase(_TC, Config) ->
 
 start_workers(Config, WithRules) ->
 	BootstrapFile = proplists:get_value(bootstrap_file, Config),
-	application:set_env(seerstone_graph_db, bootstrap_file, BootstrapFile),
+	application:set_env(graphdb, bootstrap_file, BootstrapFile),
 	{ok, _} = rel_id_server:start_link(),
 	graphdb_nref:set_permanent_phase(),
 	{ok, _} = graphdb_nref:start_link(),
@@ -181,7 +181,7 @@ end_per_testcase(_TC, Config) ->
 	TmpDir = proplists:get_value(tmp_dir, Config),
 	delete_dir_recursive(TmpDir),
 
-	application:unset_env(seerstone_graph_db, bootstrap_file),
+	application:unset_env(graphdb, bootstrap_file),
 	application:unset_env(mnesia, dir),
 	ok.
 

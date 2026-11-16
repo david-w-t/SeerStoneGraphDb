@@ -138,7 +138,7 @@ end_per_group(_Group, _Config) ->
 init_per_testcase(_TC, Config) ->
 	Config1 = setup_isolated_env(Config),
 	BootstrapFile = proplists:get_value(bootstrap_file, Config),
-	application:set_env(seerstone_graph_db, bootstrap_file, BootstrapFile),
+	application:set_env(graphdb, bootstrap_file, BootstrapFile),
 	%% Start workers in dependency order (mirrors graphdb_instance_SUITE)
 	{ok, _} = rel_id_server:start_link(),
 	graphdb_nref:set_permanent_phase(),
@@ -184,7 +184,7 @@ end_per_testcase(TC, Config) ->
 	TmpDir = proplists:get_value(tmp_dir, Config),
 	delete_dir_recursive(TmpDir),
 
-	application:unset_env(seerstone_graph_db, bootstrap_file),
+	application:unset_env(graphdb, bootstrap_file),
 	application:unset_env(mnesia, dir),
 	Verdict.
 

@@ -559,22 +559,37 @@ nref value alone.
 
 ### Configuration
 
-Single authoritative config: `apps/seerstone/priv/default.config`.
+`config/sys.config` is the config for `make shell` and releases;
+`apps/seerstone/priv/default.config` mirrors it and is not read by code.
 
 ```erlang
 [{seerstone_graph_db, [
    {app_port,       8080},
    {log_path,       "log"},
-   {data_path,      "data"},
-   {bootstrap_file, "apps/graphdb/priv/bootstrap.terms"},
+   {data_path,      "data"}
+ ]},
+ {graphdb, [
    {startup_warn_ms, 2000}
  ]},
  {mnesia, [{dir, "data"}]}].
 ```
 
-Relative paths resolve from the OTP release root; absolute paths take
-effect as-is. Mnesia reads `dir` from its own application env — no code
-sets it.
+graphdb reads its settings from its own application env: `startup_warn_ms`
+and an optional `bootstrap_file`, which defaults to graphdb's
+`priv/bootstrap.terms`. No application is named `seerstone_graph_db`, so
+that stanza is visible only under `rebar3 shell`, which sets every stanza
+by hand; a release ignores it (dictionary's `data_path` falls back to
+`"data"`). Relative paths resolve from the working directory, and a release
+runs from its root directory. Mnesia reads `dir` from its own application
+env; no code sets it.
+
+On a boot from existing data the loader writes nothing and checks the data
+against the bootstrap file: the scaffold nrefs, and every node, AVP and arc
+pair the file would write. Workers may add AVPs to bootstrap nodes; they
+never remove them. A mismatch stops the boot with `{stale_data_directory,
+Dir, Differences}`. Seeds and persistence are in flux and old data is not
+migrated, so this replaces an obscure worker `init/1` failure with a plain
+instruction to move the data aside.
 
 ### Bootstrap file format
 

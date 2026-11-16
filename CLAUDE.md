@@ -86,7 +86,10 @@ predecessor to `nref_server` and is fully superseded by it.
 on first startup when the Mnesia `nodes` table is empty. The loader uses a
 local counter for permanent-tier labels (`?LABEL_START`..`?NREF_START-1`) and
 does **not** call `set_floor` — the `graphdb:start/2` phase flip raises the
-runtime floor after all child `init/1`s complete.
+runtime floor after all child `init/1`s complete. On a boot from existing
+data it loads nothing and checks the data against the bootstrap file instead
+(scaffold nrefs, and every node, AVP and arc pair the file would write); a
+mismatch stops the boot with `{stale_data_directory, Dir, Differences}`.
 
 ## Common Coding Conventions
 
@@ -174,7 +177,8 @@ stores, DETS allocators) are still being redesigned. Until this section is
 removed:
 
 - **No backward compatibility.** A change may require wiping `data/` and
-  re-bootstrapping. Do not write migrations or compatibility shims for
+  re-bootstrapping. A boot on data bootstrapped from an older
+  `bootstrap.terms` stops with `{stale_data_directory, ...}` and says so. Do not write migrations or compatibility shims for
   existing data.
 - **Seed changes are allowed** when a design calls for them. Keep
   `docs/diagrams/ontology-tree.md` and the nref quick-reference current.
@@ -313,8 +317,9 @@ work landed in PR #12.
 [{seerstone_graph_db, [
   {app_port,       8080},
   {log_path,       "log"},
-  {data_path,      "data"},
-  {bootstrap_file, "apps/graphdb/priv/bootstrap.terms"},
+  {data_path,      "data"}
+]},
+ {graphdb, [
   {startup_warn_ms, 2000}
 ]},
  {mnesia, [
@@ -322,11 +327,21 @@ work landed in PR #12.
 ]}].
 ```
 
-`startup_warn_ms`: `graphdb:start/2` logs a startup profile on every boot
-(`graphdb_startup`: each phase's time, the total, the environment table
-sizes); the line is a warning when the total exceeds this many milliseconds.
+graphdb reads its settings from the `graphdb` application env, which
+`sys.config` reaches in every launch mode:
 
-Both relative and absolute paths are accepted for `log_path`, `data_path`, and `bootstrap_file`. Relative paths resolve from the OTP release root.
+- `startup_warn_ms`: `graphdb:start/2` logs a startup profile on every boot
+  (`graphdb_startup`: each phase's time, the total, the environment table
+  sizes); the line is a warning when the total exceeds this many
+  milliseconds. Default 2000 (also in `graphdb.app.src`).
+- `bootstrap_file` (optional): defaults to graphdb's own
+  `priv/bootstrap.terms`, which exists in the source tree and in a release.
+
+No application is named `seerstone_graph_db`, so its stanza is visible only
+under `rebar3 shell`, which sets every `sys.config` stanza by hand; a
+release ignores it. Only `data_path` is read (dictionary, default `"data"`).
+Relative paths resolve from the working directory; a release runs from its
+root directory.
 
 ## CI
 

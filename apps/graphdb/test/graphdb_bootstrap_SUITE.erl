@@ -72,10 +72,15 @@
 	load_english_instance/1,
 	load_labeled_nodes/1,
 	load_english_class_membership/1,
-	load_missing_config/1,
+	load_defaults_to_priv_bootstrap_file/1,
 	load_nonexistent_file/1,
 	load_invalid_terms/1,
-	load_nref_above_floor/1
+	load_nref_above_floor/1,
+	reload_accepts_avps_added_after_bootstrap/1,
+	reload_rejects_changed_bootstrap_file/1,
+	reload_rejects_missing_scaffold_node/1,
+	reload_rejects_missing_bootstrap_arc/1,
+	reload_rejects_removed_bootstrap_avp/1
 ]).
 
 
@@ -87,7 +92,7 @@ suite() ->
 	[{timetrap, {seconds, 30}}].
 
 all() ->
-	[{group, success}, {group, errors}].
+	[{group, success}, {group, errors}, {group, stale_data}].
 
 groups() ->
 	[
@@ -109,10 +114,17 @@ groups() ->
 			load_english_class_membership
 		]},
 		{errors, [], [
-			load_missing_config,
+			load_defaults_to_priv_bootstrap_file,
 			load_nonexistent_file,
 			load_invalid_terms,
 			load_nref_above_floor
+		]},
+		{stale_data, [], [
+			reload_accepts_avps_added_after_bootstrap,
+			reload_rejects_changed_bootstrap_file,
+			reload_rejects_missing_scaffold_node,
+			reload_rejects_missing_bootstrap_arc,
+			reload_rejects_removed_bootstrap_avp
 		]}
 	].
 
@@ -162,7 +174,7 @@ init_per_testcase(_TC, Config) ->
 
 	%% Configure bootstrap_file (absolute path — cwd-independent)
 	BootstrapFile = proplists:get_value(bootstrap_file, Config),
-	application:set_env(seerstone_graph_db, bootstrap_file, BootstrapFile),
+	application:set_env(graphdb, bootstrap_file, BootstrapFile),
 
 	%% Start nref fresh (DETS files created in TmpDir)
 	{ok, _} = application:ensure_all_started(nref),
@@ -208,7 +220,7 @@ end_per_testcase(TC, Config) ->
 	delete_dir_recursive(TmpDir),
 
 	%% Unset app env to avoid leaking between test cases
-	application:unset_env(seerstone_graph_db, bootstrap_file),
+	application:unset_env(graphdb, bootstrap_file),
 	application:unset_env(mnesia, dir),
 
 	Verdict.
@@ -489,12 +501,14 @@ load_english_class_membership(_Config) ->
 %%=============================================================================
 
 %%-----------------------------------------------------------------------------
-%% load/0 with no bootstrap_file in app env returns an error.
+%% load/0 with no bootstrap_file setting uses graphdb's priv file.
 %%-----------------------------------------------------------------------------
-load_missing_config(_Config) ->
-	application:unset_env(seerstone_graph_db, bootstrap_file),
-	Result = graphdb_bootstrap:load(),
-	?assertMatch({error, {missing_config, bootstrap_file}}, Result).
+load_defaults_to_priv_bootstrap_file(_Config) ->
+	%% Unset, the bootstrap file is graphdb's own priv/bootstrap.terms,
+	%% which a release carries too.
+	application:unset_env(graphdb, bootstrap_file),
+	?assertEqual(ok, graphdb_bootstrap:load()),
+	?assertMatch([_], mnesia:dirty_read(nodes, ?NREF_ENGLISH)).
 
 %%-----------------------------------------------------------------------------
 %% load/0 with a nonexistent file returns an error.
@@ -502,7 +516,7 @@ load_missing_config(_Config) ->
 load_nonexistent_file(Config) ->
 	TmpDir = proplists:get_value(tmp_dir, Config),
 	BadPath = filename:join(TmpDir, "does_not_exist.terms"),
-	application:set_env(seerstone_graph_db, bootstrap_file, BadPath),
+	application:set_env(graphdb, bootstrap_file, BadPath),
 	Result = graphdb_bootstrap:load(),
 	?assertMatch({error, {consult_failed, _, _}}, Result).
 
@@ -513,7 +527,7 @@ load_invalid_terms(Config) ->
 	TmpDir = proplists:get_value(tmp_dir, Config),
 	BadFile = filename:join(TmpDir, "bad.terms"),
 	ok = file:write_file(BadFile, "{bogus, stuff}.\n"),
-	application:set_env(seerstone_graph_db, bootstrap_file, BadFile),
+	application:set_env(graphdb, bootstrap_file, BadFile),
 	Result = graphdb_bootstrap:load(),
 	?assertMatch({error, {unknown_term, {bogus, stuff}}}, Result).
 
@@ -525,9 +539,81 @@ load_nref_above_floor(Config) ->
 	BadFile = filename:join(TmpDir, "above_floor.terms"),
 	ok = file:write_file(BadFile,
 		"{node, 1000000, category, {17, \"X\"}, []}.\n"),
-	application:set_env(seerstone_graph_db, bootstrap_file, BadFile),
+	application:set_env(graphdb, bootstrap_file, BadFile),
 	Result = graphdb_bootstrap:load(),
 	?assertMatch({error, {nref_not_below_floor, ?NREF_START, ?NREF_START}}, Result).
+
+
+%%=============================================================================
+%% Stale-data Test Cases
+%%
+%% A second load/0 on populated tables loads nothing and checks the stored
+%% data against the bootstrap file (graphdb_bootstrap:check_existing/0).
+%%=============================================================================
+
+%% Workers add AVPs to bootstrap nodes after the load (the attribute_type
+%% retro-stamp, the Template marker); that is not a difference.
+reload_accepts_avps_added_after_bootstrap(_Config) ->
+	ok = graphdb_bootstrap:load(),
+	[N] = mnesia:dirty_read(nodes, ?ARC_TEMPLATE),
+	Added = N#node.attribute_value_pairs ++
+		[#{attribute => ?ARC_TEMPLATE, value => true}],
+	ok = mnesia:dirty_write(nodes, N#node{attribute_value_pairs = Added}),
+	?assertEqual(ok, graphdb_bootstrap:load()).
+
+%% Data bootstrapped from an older bootstrap file: the file now has a
+%% node the data lacks.  Appending keeps every earlier label's nref.
+reload_rejects_changed_bootstrap_file(Config) ->
+	ok = graphdb_bootstrap:load(),
+	{ok, Current} = file:read_file(proplists:get_value(bootstrap_file, Config)),
+	Newer = filename:join(proplists:get_value(tmp_dir, Config), "newer.terms"),
+	ok = file:write_file(Newer, [Current,
+		"\n{node, newer_seed, attribute, {18, \"Newer\"}, []}.\n"
+		"{relationship, 7, 24, [], 23, newer_seed, [], taxonomy}.\n"]),
+	application:set_env(graphdb, bootstrap_file, Newer),
+	{error, {stale_data_directory, Dir, Problems}} = graphdb_bootstrap:load(),
+	?assertEqual(mnesia:system_info(directory), Dir),
+	?assertMatch([{missing_node, _}], [P || {missing_node, _} = P <- Problems]),
+	?assertEqual(2, length([P || {missing_relationship, _, _, _} = P <- Problems])).
+
+%% A scaffold node the data lacks fails both the scaffold nrefs check and
+%% the node check.
+reload_rejects_missing_scaffold_node(_Config) ->
+	ok = graphdb_bootstrap:load(),
+	ok = mnesia:dirty_delete(nodes, ?NREF_RENDERERS),
+	{error, {stale_data_directory, _, Problems}} = graphdb_bootstrap:load(),
+	?assert(lists:keymember(scaffold_nref_mismatch, 1, Problems)),
+	?assert(lists:member({missing_node, ?NREF_RENDERERS}, Problems)).
+
+%% A bootstrap arc pair the data lacks.
+reload_rejects_missing_bootstrap_arc(_Config) ->
+	ok = graphdb_bootstrap:load(),
+	Rows = [R || R <- mnesia:dirty_index_read(relationships, ?NREF_LANGUAGES,
+			#relationship.source_nref),
+		R#relationship.target_nref =:= ?NREF_RENDERERS] ++
+		[R || R <- mnesia:dirty_index_read(relationships, ?NREF_RENDERERS,
+			#relationship.source_nref),
+		R#relationship.target_nref =:= ?NREF_LANGUAGES],
+	?assertEqual(2, length(Rows)),
+	[ok = mnesia:dirty_delete(relationships, R#relationship.id) || R <- Rows],
+	%% Keep the parents caches consistent with the arcs for teardown.
+	ok = graphdb_mgr:rebuild_caches(),
+	{error, {stale_data_directory, _, Problems}} = graphdb_bootstrap:load(),
+	?assertEqual(lists:sort(
+		[{missing_relationship, R#relationship.source_nref,
+			R#relationship.characterization, R#relationship.target_nref}
+		 || R <- Rows]),
+		lists:sort(Problems)).
+
+%% An AVP the bootstrap file gives a node (English's lang_code) is gone.
+reload_rejects_removed_bootstrap_avp(_Config) ->
+	ok = graphdb_bootstrap:load(),
+	[N] = mnesia:dirty_read(nodes, ?NREF_ENGLISH),
+	Kept = [A || #{value := V} = A <- N#node.attribute_value_pairs, V =/= en],
+	?assert(length(Kept) < length(N#node.attribute_value_pairs)),
+	ok = mnesia:dirty_write(nodes, N#node{attribute_value_pairs = Kept}),
+	{error, {stale_data_directory, _, Problems}} = graphdb_bootstrap:load(),
+	?assertMatch([{avps_missing, ?NREF_ENGLISH, [#{value := en}]}], Problems).
 
 
 %%=============================================================================

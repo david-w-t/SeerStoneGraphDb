@@ -6,7 +6,7 @@
 # Why this works (and a single `rebar3 ct` cannot parallelise in-VM):
 #   The suites share node-global singletons — one Mnesia instance, named
 #   gen_servers (graphdb_mgr, graphdb_attr, ...), and the `mnesia`/
-#   `seerstone_graph_db` application env. Two suites in the SAME Erlang node
+#   `graphdb` application env. Two suites in the SAME Erlang node
 #   would clobber each other. So we fan out across separate OS processes
 #   instead, giving each its own `REBAR_BASE_DIR` (isolated _build, ~1.4M,
 #   ~7s compile). Each testcase already writes its Mnesia scratch to a
