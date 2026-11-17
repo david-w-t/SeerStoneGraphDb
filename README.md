@@ -29,8 +29,16 @@ Implementation is underway:
 | `graphdb_language`     | Fully implemented — multilingual overlay (language registration, dialect chains, per-language overlay tables, label resolution, translation hooks)                                                                                                                                                                                                                                                                                                                                  |
 | `graphdb_query`        | Implemented — query language (parse/execute, snapshot-semantics sessions, path finding)                                                                                                                                                                                                                                                                                                                                                                                             |
 
-**537 tests** (105 EUnit + 432 Common Test) — all passing. See
+**744 tests** (151 EUnit + 593 Common Test) — all passing. See
 `TASKS.md` for remaining work.
+
+**Not yet stable:** the seed ontology and the storage layout are still
+changing, and new versions are not compatible with data written by older
+ones. After updating, start from an empty data directory. A boot on a data
+directory bootstrapped from an older `bootstrap.terms` stops with
+`{stale_data_directory, Dir, Differences}` and logs what to move aside. This
+note will be removed once both are settled and compatibility can be
+supported.
 
 ---
 
@@ -235,21 +243,25 @@ Priority order — each step applies only to attributes not yet resolved by a hi
 | Suite                     | Type  | Tests | Coverage                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | ------------------------- | ----- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `graphdb_bootstrap_tests` | EUnit | 61    | Term parsing, validation, record conversion, nref macro consistency                                                                                                                                                                                                                                                                                                                                                                          |
-| `graphdb_class_tests`     | EUnit | 13    | `is_valid_parent_kind/1`, `collect_qc_nrefs/2`                                                                                                                                                                                                                                                                                                                                                                                               |
-| `graphdb_instance_tests`  | EUnit | 13    | `find_avp_value/2`, composition-firing helpers (`summarize/1` etc.)                                                                                                                                                                                                                                                                                                                                                                          |
+| `graphdb_class_tests`     | EUnit | 20    | `is_valid_parent_kind/1`, `collect_qc_nrefs/2`                                                                                                                                                                                                                                                                                                                                                                                               |
+| `graphdb_instance_tests`  | EUnit | 15    | `find_avp_value/2`, composition-firing helpers (`summarize/1` etc.)                                                                                                                                                                                                                                                                                                                                                                          |
 | `graphdb_language_tests`  | EUnit | 9     | Dialect-chain building, label-resolution helpers                                                                                                                                                                                                                                                                                                                                                                                             |
-| `graphdb_mgr_tests`       | EUnit | 9     | Direction validation, client-side arg checks                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `graphdb_bootstrap_SUITE` | CT    | 19    | Full bootstrap load, Mnesia tables, idempotency, error handling, Language subcategory nodes                                                                                                                                                                                                                                                                                                                                                  |
-| `graphdb_mgr_SUITE`       | CT    | 37    | Bootstrap init, read ops, category guard, write stubs, cache audit/repair, soft-retire (`retire_node/1`, `unretire_node/1`), `get_node` retired-filter                                                                                                                                                                                                                                                                                       |
-| `graphdb_attr_SUITE`      | CT    | 38    | Attribute create/lookup, seeding, relationship types, atomic reciprocal pair, literal sub-groups, `attribute_type`/`instantiable`/`retired` markers                                                                                                                                                                                                                                                                                          |
-| `graphdb_class_SUITE`     | CT    | 49    | Class create, QC (qualifying characteristics), lookups, hierarchy, multi-inheritance, inheritance, templates, abstract classes                                                                                                                                                                                                                                                                                                               |
-| `graphdb_instance_SUITE`  | CT    | 110   | Instance create (incl. composition rule firing, propose-mode outcomes, `{Min,Max}` multiplicity, connection firing — resolver-driven mandatory/auto/propose, target validation — and horizontal conflict precedence via `create_instance/5`; retired-node guards for target/parent/endpoint), relationships (incl. arc validation, per-arc AVPs — attribute-value pairs), lookups, hierarchy, four-level inheritance, multi-class membership |
+| `graphdb_mgr_tests`       | EUnit | 30    | Direction validation, client-side arg checks                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `graphdb_ns_tests`        | EUnit | 16    | Pure namespace map: `namespace_of/2`, `target_namespace/2`, `node_table/1`, `rel_table/1`, `arc_target_namespace/3`                                                                                                                                                                                                                                                                                                                          |
+| `graphdb_bootstrap_SUITE` | CT    | 24    | Full bootstrap load, Mnesia tables, idempotency, error handling, Language subcategory nodes, default bootstrap file, stale-data check on a reload                                                                                                                                                                                                                                                                                            |
+| `graphdb_mgr_SUITE`       | CT    | 77    | Bootstrap init, read ops, category guard, write stubs, cache audit/repair, soft-retire (`retire_node/1`, `unretire_node/1`), `get_node` retired-filter                                                                                                                                                                                                                                                                                       |
+| `graphdb_attr_SUITE`      | CT    | 41    | Attribute create/lookup, seeding, relationship types, atomic reciprocal pair, literal sub-groups, `attribute_type`/`instantiable`/`retired` markers                                                                                                                                                                                                                                                                                          |
+| `graphdb_class_SUITE`     | CT    | 79    | Class create, QC (qualifying characteristics), lookups, hierarchy, multi-inheritance, inheritance, templates, abstract classes                                                                                                                                                                                                                                                                                                               |
+| `graphdb_instance_SUITE`  | CT    | 140   | Instance create (incl. composition rule firing, propose-mode outcomes, `{Min,Max}` multiplicity, connection firing — resolver-driven mandatory/auto/propose, target validation — and horizontal conflict precedence via `create_instance/5`; retired-node guards for target/parent/endpoint), relationships (incl. arc validation, per-arc AVPs — attribute-value pairs), lookups, hierarchy, four-level inheritance, multi-class membership |
 | `graphdb_language_SUITE`  | CT    | 27    | Multilingual overlay: language/dialect registration, per-language overlay tables, label resolution, translation hooks                                                                                                                                                                                                                                                                                                                        |
-| `graphdb_query_SUITE`     | CT    | 43    | Query language: parse/execute, snapshot-semantics sessions, `#cont_path{}` resume, path finding                                                                                                                                                                                                                                                                                                                                              |
-| `graphdb_rules_SUITE`     | CT    | 80    | Rule meta-ontology seeding (incl. `reciprocal_nref` literal), composition/connection rule create/retrieve (incl. reciprocal param), validation catalog (incl. `{Min,Max}` multiplicity range), `effective_rules_for_class/2` taxonomy walk, `effective_connection_rules/2`, composition firing engine, propose mode, connection firing, horizontal conflict resolution                                                                       |
+| `graphdb_query_SUITE`     | CT    | 61    | Query language: parse/execute, snapshot-semantics sessions, `#cont_path{}` resume, path finding                                                                                                                                                                                                                                                                                                                                              |
+| `graphdb_rules_SUITE`     | CT    | 81    | Rule meta-ontology seeding (incl. `reciprocal_nref` literal), composition/connection rule create/retrieve (incl. reciprocal param), validation catalog (incl. `{Min,Max}` multiplicity range), `effective_rules_for_class/2` taxonomy walk, `effective_connection_rules/2`, composition firing engine, propose mode, connection firing, horizontal conflict resolution                                                                       |
+| `graphdb_seeds_SUITE`     | CT    | 13    | Seed cache load/lookup/erase, label index and `{label_not_seed, ...}` failure, non-nref arguments, real application boot on an empty directory and restart on a second one                                                                                                                                                                                                                                                                   |
+| `graphdb_startup_SUITE`   | CT    | 4     | Startup profile: one line per boot naming every phase in order, warning over `startup_warn_ms`, warm restart without the bootstrap load, `timed/2` outside a boot                                                                                                                                                                                                                                                                            |
 | `graphdb_nref_SUITE`      | CT    | 6     | Switchable node-nref allocation facade; permanent/runtime phase flip                                                                                                                                                                                                                                                                                                                                                                         |
 | `graphdb_nrefs_SUITE`     | CT    | 2     | `graphdb_nrefs:verify/0` bootstrap nref-macro consistency check                                                                                                                                                                                                                                                                                                                                                                              |
-| `rel_id_server_SUITE`     | CT    | 7     | Relationship-row ID allocator (`get_id/0`, `get_id_pair/0`)                                                                                                                                                                                                                                                                                                                                                                                  |
+| `graphdb_project_SUITE`   | CT    | 13    | Project registry and physical store: register/open/require, per-project tables, project-local nref and rel-id allocators                                                                                                                                                                                                                                                                                                                     |
+| `rel_id_server_SUITE`     | CT    | 11    | Relationship-row ID allocator (`get_id/0`, `get_id_pair/0`)                                                                                                                                                                                                                                                                                                                                                                                  |
 | `dictionary_server_SUITE` | CT    | 7     | `dictionary_server` gen_server behaviour                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `term_server_SUITE`       | CT    | 7     | `term_server` gen_server behaviour                                                                                                                                                                                                                                                                                                                                                                                                           |
 
@@ -277,8 +289,11 @@ configures both the OTP logger and the application settings:
   {seerstone_graph_db, [
     {app_port,       8080},
     {log_path,       "log"},
-    {data_path,      "data"},
-    {bootstrap_file, "apps/graphdb/priv/bootstrap.terms"}
+    {data_path,      "data"}
+  ]},
+  {graphdb, [
+    {startup_warn_ms, 2000}
+    %% Optional: {bootstrap_file, Path}; default graphdb's priv/bootstrap.terms
   ]},
   {mnesia, [
     {dir, "data"}
@@ -286,11 +301,16 @@ configures both the OTP logger and the application settings:
 ].
 ```
 
-`apps/seerstone/priv/default.config` carries the `seerstone_graph_db` and
-`mnesia` stanzas and is used as a fallback when no `sys.config` is present.
+graphdb's settings live in the `graphdb` stanza, which every launch mode
+reads: `make shell`, a release, and `erl -config`. No application is named
+`seerstone_graph_db`, so that stanza is visible only under `rebar3 shell`
+(which sets every stanza by hand); a release ignores it, and only
+`data_path` is read (dictionary, default `"data"`).
+`apps/seerstone/priv/default.config` mirrors these stanzas; no code reads it.
 
-**Note:** the `log/` directory must exist before starting the system; it is
-not created automatically. Create it once with `mkdir log`.
+A release runs from its own root directory (`_build/prod/rel/seerstone`),
+so `data/`, the nref `.dets` files and `log/` are created there. The logger
+creates `log/` when it is missing.
 
 ---
 
@@ -298,6 +318,22 @@ not created automatically. Create it once with `mkdir log`.
 
 Logs are written to `log/seerstone.log` (rotating, 5 × 10 MB segments).
 Errors are also echoed to stdout.
+
+### Startup profile
+
+Every boot writes one line to the log with the time each startup phase
+took, the total, the size of the environment `nodes` and `relationships`
+tables, and how long the VM had been up:
+
+```text
+graphdb startup: 1291.6 ms total (nodes 300068, relationships 136, VM up 1650 ms); phases (ms): graphdb_nref 0.0, rel_id_server 8.0, ensure_mnesia 0.0, create_tables 0.1, wait_for_tables 111.1, graphdb_mgr 125.0, graphdb_attr 455.2, ...
+```
+
+The line is a **warning** instead of info when the total exceeds
+`startup_warn_ms` in the `graphdb` config (default 2000 ms).
+`ensure_mnesia`, `create_tables`, `wait_for_tables` and (first boot only)
+`bootstrap_load` run inside `graphdb_mgr`'s start, so its time includes
+theirs. To follow the trend: `grep "graphdb startup" log/seerstone.log*`.
 
 ### Changing the log level at runtime
 

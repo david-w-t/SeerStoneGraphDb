@@ -4,6 +4,6 @@
   {registered, []},
   {mod, {graphdb, []}},
   {applications, [kernel, stdlib, mnesia, nref]},
-  {env, []},
+  {env, [{startup_warn_ms, 2000}]},
   {modules, []}
  ]}.

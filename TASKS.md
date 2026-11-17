@@ -572,9 +572,40 @@ an environment class reaches its project instances; the edge discloses
 outgoing rows of its own in that table. `#q_instances_of{}` shares the same
 read (`session_read_outgoing/4`) instead of its former special case.
 
-Still open: backfilling `target_kind` onto bootstrap arc labels 21–30, which
-would let `graphdb_instance:check_target_kind/3` drop its permissive legacy
-arm.
+**`target_kind` backfill — superseded.** Bootstrap arc labels 21–30 join
+nodes of more than one kind, so a single `target_kind` would be false.
+Replaced by the seed cache / attribute placement / relationship label pairs
+work, which removes `target_kind` altogether — design (approved 2026-11-11):
+`docs/designs/seed-cache-attribute-placement-label-pairs-design.md`. A first
+strict-check implementation is preserved as tag `strict-labels-snapshot-1`.
+
+**Piece A — seed cache — IMPLEMENTED.** `graphdb_seeds` holds every
+environment node below `?NREF_START` in one `persistent_term` map (plus a
+label to nref index), loaded by `graphdb:start/2` right after the runtime
+flip; reads are safe inside Mnesia transactions. Seeds are frozen after the
+load: `graphdb_class` refuses `add_superclass/2`,
+`add_qualifying_characteristic/2,3` and `bind_qc_value/3` on a seed class
+(`{error, permanent_node_immutable}`); `graphdb_attr`'s retro-stamp and
+Template marker stamp refuse an actual seed write; `graphdb_mgr:rebuild_caches/0`
+skips seed rows. Every CT suite that starts graphdb workers now flips and
+loads like production and asserts at teardown that no seed row changed;
+`graphdb_seeds_SUITE` adds the first tests that boot the real application,
+which exposed the empty-data-dir boot defect below (now fixed).
+Design: the spec above ("Piece A", "Freezing seeds", "Test harness").
+Pieces B (attribute placement) and C (relationship label pairs) remain.
+
+**Defect (Important, pre-existing, found during Piece A) — booting the real
+`graphdb` application on an empty data directory — IMPLEMENTED
+(2026-11-13).** The boot returned
+`{create_table_failed,nodes,{bad_type,nodes,disc_copies,nonode@nohost}}`.
+Mnesia is a `graphdb` application dependency, so it starts with a RAM schema
+before `graphdb`, and `graphdb_bootstrap:ensure_mnesia/0` skipped
+`create_schema` when Mnesia was already running; the `disc_copies` table then
+could not be created. CT never hit it because the suites start workers by
+hand. `ensure_mnesia/0` now converts a running RAM schema to disc
+(`mnesia:change_table_copy_type(schema, node(), disc_copies)`); the
+`graphdb_seeds_SUITE` app-boot cases boot on empty directories with no
+workaround.
 
 **Defect (Important, pre-existing, unrelated to SP2) —
 `rel_id_server` counter seeding — IMPLEMENTED (2026-08-09).** Filed as a
@@ -715,6 +746,56 @@ global counters suffice, and document the decision. Confirm the
 allocate-outside-transaction rationale carries an inline comment at each
 allocation site. Observability only — no behavioural change to the write
 paths.
+
+### Startup profile — IMPLEMENTED (2026-11-16)
+
+Every boot logs one line to `log/seerstone.log` with the time of each phase
+(Mnesia start, table creation and load, first-boot bootstrap load, each
+`graphdb_sup` child's `init/1`, runtime flip, seed cache load), the total,
+the environment `nodes` / `relationships` sizes and the VM uptime. It is a
+warning when the total exceeds `startup_warn_ms` (`graphdb` config,
+default 2000). Module `graphdb_startup`; design
+`docs/designs/startup-profile-design.md`.
+
+### Stale data directory check — IMPLEMENTED (2026-11-16)
+
+A `data/` bootstrapped from an older `bootstrap.terms` used to boot into its
+old seeds and fail in whichever worker `init/1` first missed one (seen as
+`{literal_not_found, "lang_code"}` from `graphdb_language`). On a boot from
+existing data, `graphdb_bootstrap` now checks the data against the file
+(`graphdb_nrefs:verify/0`, every node with its file AVPs, every arc pair)
+and stops with `{stale_data_directory, Dir, Differences}` after logging what
+to move aside. It reads only the file's rows (under 30 ms). Not detected: a
+node or arc the file no longer has, and worker `init/1` seeds (those are
+find-or-create, so a newer worker adds them on the next boot).
+
+### Release boot — IMPLEMENTED (2026-11-16)
+
+`make release` built, but the release stopped at boot with
+`{bootstrap_failed, {missing_config, bootstrap_file}}`. No application is
+named `seerstone_graph_db`, so a release never exposes that `sys.config`
+stanza; only `rebar3 shell` sets it by hand. The configured path
+`apps/graphdb/priv/bootstrap.terms` would not have existed in a release
+either. graphdb's settings (`startup_warn_ms`, optional `bootstrap_file`)
+now live in the `graphdb` application env, and `bootstrap_file` defaults
+to graphdb's own `priv/bootstrap.terms`. Remaining: dictionary still reads
+`data_path` from `seerstone_graph_db` (a release silently uses its default,
+`"data"`), and `app_port` / `log_path` are not read by anything.
+
+### Startup scans that grow with the environment *(follow-up)*
+
+The profile's first large-environment run (300 000 extra attribute nodes,
+cold boot of 1.3 s) found most of the time in three full scans of every
+attribute node: `graphdb_attr:retro_stamp_attribute_types/0` (a
+`mnesia:match_object` on `kind = attribute` under read locks) runs in the
+`init/1` of `graphdb_attr`, `graphdb_language` and `graphdb_rules` (455,
+347 and 292 ms). On a warm boot it never writes anything. Also,
+`graphdb_seeds:load/0` uses `dirty_select` with a `'<'` guard on the key,
+which scans the whole `nodes` table instead of the permanent tier only (21
+ms there). Options: run the retro-stamp once per boot instead of three
+times, limit it to the permanent tier (only seeds lack the stamp; runtime
+creators stamp at creation), or skip it when the stamp is already present
+on a marker node. Measure with the startup profile before and after.
 
 ### Hot code upgrade — `code_change/3` *(deferred)*
 

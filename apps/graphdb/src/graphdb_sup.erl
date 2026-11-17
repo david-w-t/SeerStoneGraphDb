@@ -19,6 +19,11 @@
 %% Rev PA1 Date: August 26, 2008 Author: Dallas Noyes (dallas.noyes@gmail.com)
 %% Initial implementation and testing of module completed.
 %% 
+%%---------------------------------------------------------------------
+%% Rev PA2 Date: November 16, 2026 Author: David W. Thomas
+%% Children start through graphdb_startup:start_child/1, which times
+%% each child's init/1 for the startup profile.
+%%
 %%--------------------------------------------------------------------- 
 %% Rev A Date: *** 2008 Author: Dallas Noyes (dallas.noyes@gmail.com)
 %%  
@@ -243,7 +248,9 @@ init(State) ->
 childspec(Name) -> %% use the name if the specs are identical otherwise copy as childspec(1), childspec(2)....for each of the children with unique specs.
 	%% Define Wkr1 child_spec
 		Id = Name, %Id = term()
-		StartFunc = {Id, start_link, []}, %% module-function-arguments tuple used as apply(M, F, A).
+		%% graphdb_startup:start_child/1 calls Name:start_link() and records
+		%% how long the child's init/1 took during a profiled boot.
+		StartFunc = {graphdb_startup, start_child, [Id]}, %% module-function-arguments tuple used as apply(M, F, A).
 		Restart = permanent, 	%% Restart = permanent | transient | temporary
 		Shutdown = brutal_kill, %% Shutdown = brutal_kill | int()>=0 | infinity
 		Type = worker, 			%% Type = worker | supervisor

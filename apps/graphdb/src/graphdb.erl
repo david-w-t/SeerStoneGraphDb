@@ -17,6 +17,22 @@
 %% Initial implementation and testing of module completed.
 %% 
 %%--------------------------------------------------------------------- 
+%% Rev PA2 Date: November 13, 2026 Author: David W. Thomas
+%% start/2 loads the seed cache (graphdb_seeds:load/0) after the runtime flip.
+%%
+%%---------------------------------------------------------------------
+%% Rev PA3 Date: November 13, 2026 Author: David W. Thomas
+%% start/2 erases any seed cache left by an earlier start in this VM
+%% before the permanent phase, so a restart on another data directory
+%% does not treat the old seeds as frozen.
+%%
+%%---------------------------------------------------------------------
+%% Rev PA4 Date: November 16, 2026 Author: David W. Thomas
+%% start/2 profiles the boot (graphdb_startup): each phase's duration,
+%% the total and the environment table sizes are logged in one line,
+%% as a warning when the total exceeds startup_warn_ms.
+%%
+%%---------------------------------------------------------------------
 %% Rev A Date: *** 2008 Author: Dallas Noyes (dallas.noyes@gmail.com)
 %%  
 %%--------------------------------------------------------------------- 
@@ -138,6 +154,12 @@
 %%--------------------------------------------------------------------- 
 
 start(Type, StartArgs) ->
+	%% A seed cache from an earlier start in this VM describes another
+	%% data directory; drop it before anything consults it.
+	ok = graphdb_seeds:erase(),
+	%% Time every boot phase; finish/0 logs one summary line (a warning
+	%% when the total exceeds startup_warn_ms).
+	ok = graphdb_startup:begin_profile(),
 	%% Mark the permanent phase before any child init runs, so the bootstrap
 	%% loader and every seeding worker allocate in the permanent tier.
 	ok = graphdb_nref:set_permanent_phase(),
@@ -145,11 +167,18 @@ start(Type, StartArgs) ->
 		{ok, Pid} ->
 			%% All child init/1s have completed; flip to the runtime tier
 			%% (also raises nref_server's floor to ?NREF_START).
-			ok = graphdb_nref:set_runtime_phase(),
+			ok = graphdb_startup:timed(runtime_flip,
+				fun graphdb_nref:set_runtime_phase/0),
+			%% Every permanent-tier seed now exists and none can be added
+			%% later; cache them. A failed load crashes the start.
+			ok = graphdb_startup:timed(seed_cache, fun graphdb_seeds:load/0),
+			ok = graphdb_startup:finish(),
 			{ok, Pid};
 		ignore ->
+			ok = graphdb_startup:discard(),
 			{error, ignore};
 		{error, Reason} ->
+			ok = graphdb_startup:discard(),
 			{error, Reason};
 		MSG ->
 			?UEM({start , {Type, StartArgs}}, MSG)

@@ -485,7 +485,35 @@ delegates to `nref_server:get_nref/0`. The phase is held in
 the bootstrap loader and every worker `init/1` allocate in the permanent
 tier; after all child `init/1`s complete it calls
 `graphdb_nref:set_runtime_phase/0`, which also raises the `nref_server`
-floor to `?NREF_START`.
+floor to `?NREF_START`, then `graphdb_seeds:load/0`.
+
+The boot is profiled by `graphdb_startup`, a plain module: `graphdb_sup`
+starts each child through `graphdb_startup:start_child/1`, and the
+bootstrap steps, the runtime flip and the seed cache load are wrapped in
+`timed/2`. The durations go to a public ETS table that exists only while
+`graphdb:start/2` runs. It ends with one log line: every phase, the total,
+the environment table sizes. The line is a warning when the total exceeds
+`startup_warn_ms`. Outside a profiled boot (a worker restart, a test that
+starts workers by hand) the wrappers only run their work.
+
+### Seed cache (`graphdb_seeds`)
+
+`graphdb_seeds` is a plain module (not a process) that holds every
+environment node below `?NREF_START` in one `persistent_term` map, plus a
+label to nref index. Its API is `load/0`, `node/1` (nref or label atom),
+`nref/1`, `is_seed/1` (false until loaded), `all/0` and `erase/0`. Reads
+touch only `persistent_term`, so they are safe inside Mnesia transactions;
+`load/0` makes gen_server calls (workers' `seeded_nrefs/0`) and must never
+run inside one. Labels come from `graphdb_nrefs:scaffold_spec/0`, the
+`seeded_nrefs/0` maps of `graphdb_attr`, `graphdb_language` and
+`graphdb_rules`, and `graphdb_instance:remote_reference_class/0`.
+
+Once loaded, seeds are **frozen** (environment only): `graphdb_class`
+refuses `add_superclass/2`, `add_qualifying_characteristic/2,3` and
+`bind_qc_value/3` on a seed class with `{error, permanent_node_immutable}`;
+`graphdb_attr`'s retro-stamp and Template marker stamp refuse an actual seed
+write; `graphdb_mgr:rebuild_caches/0` skips seed rows. Bootstrap and worker
+`init/1` seeding run before the load and are ungated.
 
 `graphdb_bootstrap` assigns atom-labeled node nrefs from a **local counter**
 starting at `?LABEL_START`. If the counter would reach `?NREF_START` the
@@ -531,21 +559,37 @@ nref value alone.
 
 ### Configuration
 
-Single authoritative config: `apps/seerstone/priv/default.config`.
+`config/sys.config` is the config for `make shell` and releases;
+`apps/seerstone/priv/default.config` mirrors it and is not read by code.
 
 ```erlang
 [{seerstone_graph_db, [
    {app_port,       8080},
    {log_path,       "log"},
-   {data_path,      "data"},
-   {bootstrap_file, "apps/graphdb/priv/bootstrap.terms"}
+   {data_path,      "data"}
+ ]},
+ {graphdb, [
+   {startup_warn_ms, 2000}
  ]},
  {mnesia, [{dir, "data"}]}].
 ```
 
-Relative paths resolve from the OTP release root; absolute paths take
-effect as-is. Mnesia reads `dir` from its own application env — no code
-sets it.
+graphdb reads its settings from its own application env: `startup_warn_ms`
+and an optional `bootstrap_file`, which defaults to graphdb's
+`priv/bootstrap.terms`. No application is named `seerstone_graph_db`, so
+that stanza is visible only under `rebar3 shell`, which sets every stanza
+by hand; a release ignores it (dictionary's `data_path` falls back to
+`"data"`). Relative paths resolve from the working directory, and a release
+runs from its root directory. Mnesia reads `dir` from its own application
+env; no code sets it.
+
+On a boot from existing data the loader writes nothing and checks the data
+against the bootstrap file: the scaffold nrefs, and every node, AVP and arc
+pair the file would write. Workers may add AVPs to bootstrap nodes; they
+never remove them. A mismatch stops the boot with `{stale_data_directory,
+Dir, Differences}`. Seeds and persistence are in flux and old data is not
+migrated, so this replaces an obscure worker `init/1` failure with a plain
+instruction to move the data aside.
 
 ### Bootstrap file format
 
